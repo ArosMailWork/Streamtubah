@@ -1,0 +1,9 @@
+{
+  "name": "Voice FX",
+  "version": "1.0.0",
+  "description": "Sample plugin: your microphone through a Web Audio effect (robot, radio, echo, cave) into a Plugin Audio source on the stream.",
+  "author": "Streamtubah",
+  "main": "index.html",
+  "permissions": ["mic", "audio", "inputs", "scenes"],
+  "window": { "title": "Voice FX", "width": 420, "height": 520 }
+}

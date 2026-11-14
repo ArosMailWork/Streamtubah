@@ -63,7 +63,7 @@ impl Studio {
 
     /// Releases every scene and source of the current collection so a new one can load
     /// with the same source names.
-    fn clear_scene_data(&mut self) {
+    pub(super) fn clear_scene_data(&mut self) {
         if let Some(p) = self.preview_scene.take() {
             unsafe { sys::obs_source_dec_showing(p.as_ptr()) };
         }

@@ -1,5 +1,6 @@
 //! Twitch chat via the public IRC-over-WebSocket gateway, anonymous (read-only).
 
+use crate::alerts::AlertEvent;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -89,6 +90,12 @@ fn parse(line: &str) -> Option<ChatMessage> {
             if let Some(bits) = tags.get("bits") {
                 m.kind = "paid";
                 m.amount = Some(format!("{bits} bits"));
+                let mut a = AlertEvent::new("bits", "twitch", m.author.clone());
+                a.amount = bits.parse().ok();
+                a.amount_text = m.amount.clone();
+                // Cheermotes ("Cheer100") are not part of the viewer's message.
+                a.message = m.text.split_whitespace().filter(|w| !is_cheermote(w)).collect::<Vec<_>>().join(" ");
+                m.alert = Some(a);
             }
             m
         }
@@ -98,8 +105,9 @@ fn parse(line: &str) -> Option<ChatMessage> {
                 Some("sub" | "resub" | "subgift" | "submysterygift" | "giftpaidupgrade" | "primepaidupgrade") => "membership",
                 _ => "system",
             };
-            let mut m = ChatMessage::new("twitch", author, if text.is_empty() { system.clone() } else { format!("{system} — {text}") });
+            let mut m = ChatMessage::new("twitch", author.clone(), if text.is_empty() { system.clone() } else { format!("{system} — {text}") });
             m.kind = kind;
+            m.alert = usernotice_alert(&tags, &author, &text);
             m
         }
         _ => return None,
@@ -145,5 +153,71 @@ mod tests {
     fn normalizes_channel() {
         assert_eq!(normalize("https://www.twitch.tv/SomeOne?x=1"), "someone");
         assert_eq!(normalize("#Foo"), "foo");
+    }
+}
+
+/// "Cheer100", "Kappa500"…: letters followed by an amount.
+fn is_cheermote(word: &str) -> bool {
+    let digits = word.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+    digits.len() < word.len() && !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Alert for sub / resub / gift / raid notices. Single gifts that belong to a mass gift
+/// ("submysterygift") are skipped: the mass gift already raised one alert for all of them.
+fn usernotice_alert(tags: &HashMap<&str, String>, author: &str, text: &str) -> Option<AlertEvent> {
+    let num = |k: &str| tags.get(k).and_then(|v| v.parse::<u64>().ok());
+    let mut a = match tags.get("msg-id").map(String::as_str)? {
+        "sub" | "resub" => {
+            let mut a = AlertEvent::new("sub", "twitch", author);
+            a.count = num("msg-param-cumulative-months");
+            a.message = text.to_string();
+            a
+        }
+        "subgift" if tags.contains_key("msg-param-community-gift-id") => return None,
+        "subgift" => {
+            let mut a = AlertEvent::new("gift", "twitch", author);
+            a.count = Some(1);
+            a.message = tags.get("msg-param-recipient-display-name").map(|r| format!("to {r}")).unwrap_or_default();
+            a
+        }
+        "submysterygift" => {
+            let mut a = AlertEvent::new("gift", "twitch", author);
+            a.count = num("msg-param-mass-gift-count");
+            a
+        }
+        "raid" => {
+            let name = tags.get("msg-param-displayName").cloned().unwrap_or_else(|| author.to_string());
+            let mut a = AlertEvent::new("raid", "twitch", name);
+            a.count = num("msg-param-viewerCount");
+            a
+        }
+        _ => return None,
+    };
+    if let Some(id) = tags.get("id") {
+        a.id = format!("twitch-{id}");
+    }
+    Some(a)
+}
+
+#[cfg(test)]
+mod alert_tests {
+    use super::*;
+
+    #[test]
+    fn twitch_alerts() {
+        let bits = parse("@display-name=Alice;id=b1;bits=100 :alice!a@a PRIVMSG #c :Cheer100 hello there").unwrap();
+        let a = bits.alert.unwrap();
+        assert_eq!((a.kind.as_str(), a.amount, a.message.as_str()), ("bits", Some(100.0), "hello there"));
+        let resub = parse("@display-name=Bob;id=r1;msg-id=resub;msg-param-cumulative-months=7;system-msg=x :tmi.twitch.tv USERNOTICE #c :yay").unwrap();
+        let a = resub.alert.unwrap();
+        assert_eq!((a.kind.as_str(), a.count, a.id.as_str()), ("sub", Some(7), "twitch-r1"));
+        let mass = parse("@display-name=Gifter;id=g1;msg-id=submysterygift;msg-param-mass-gift-count=5;system-msg=x :tmi.twitch.tv USERNOTICE #c").unwrap();
+        assert_eq!(mass.alert.map(|a| (a.kind, a.count)), Some(("gift".into(), Some(5))));
+        let part = parse("@display-name=Gifter;id=g2;msg-id=subgift;msg-param-community-gift-id=99;msg-param-recipient-display-name=Zed;system-msg=x :tmi.twitch.tv USERNOTICE #c").unwrap();
+        assert!(part.alert.is_none());
+        let raid = parse("@display-name=raider;id=x1;msg-id=raid;msg-param-displayName=Raider;msg-param-viewerCount=42;system-msg=x :tmi.twitch.tv USERNOTICE #c").unwrap();
+        assert_eq!(raid.alert.map(|a| (a.kind, a.name, a.count)), Some(("raid".into(), "Raider".into(), Some(42))));
+        let plain = parse("@display-name=Carol;id=c1 :carol!c@c PRIVMSG #c :Cheer is a word").unwrap();
+        assert!(plain.alert.is_none());
     }
 }

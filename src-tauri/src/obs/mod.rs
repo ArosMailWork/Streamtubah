@@ -39,6 +39,7 @@ unsafe extern "C" {
     ) -> *mut c_char;
     pub fn os_cpu_usage_info_start() -> *mut std::ffi::c_void;
     pub fn os_cpu_usage_info_query(info: *mut std::ffi::c_void) -> f64;
+    pub fn os_gettime_ns() -> u64;
 }
 
 macro_rules! obs_ref {

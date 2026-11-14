@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Streamtubah Widgets</title>
+<!--
+  Chat overlay + Alert Box in ONE Browser Source. Both frames are same-origin, so they share
+  this browser's renderer instead of each Browser Source starting its own.
+  ?chat=bottom-left|bottom-right|top-left|top-right|none  &chatw=<px>  &chath=<% of height>
+  &alerts=off   and the chat overlay options size / fade / bg are passed through.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  iframe { position: absolute; border: 0; background: transparent; }
+  #alerts { inset: 0; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<iframe id="chat" title="Chat"></iframe>
+<iframe id="alerts" title="Alerts" src="/overlay/alerts" allow="autoplay"></iframe>
+<script>
+  const q = new URLSearchParams(location.search);
+  const chat = document.getElementById("chat");
+  const pos = q.get("chat") || "bottom-left";
+  if (pos === "none") {
+    chat.remove();
+  } else {
+    const [v, h] = pos.split("-");
+    chat.style.width = (parseInt(q.get("chatw")) || 420) + "px";
+    chat.style.height = (parseInt(q.get("chath")) || 60) + "%";
+    chat.style[v === "top" ? "top" : "bottom"] = "24px";
+    chat.style[h === "right" ? "right" : "left"] = "24px";
+    const cq = new URLSearchParams({ fade: "0", size: "18" });
+    for (const k of ["size", "fade", "bg"]) if (q.has(k)) cq.set(k, q.get(k));
+    chat.src = "/overlay/chat?" + cq;
+  }
+  if (q.get("alerts") === "off") document.getElementById("alerts").remove();
+</script>
+</body>
+</html>

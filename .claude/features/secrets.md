@@ -11,6 +11,9 @@
 - `src/SecretsApp.tsx` (Secrets window), `src/components/SecretField.tsx` (main-window placeholders + `useSecrets`)
 
 ## What is secret
+Donation tokens: Ko-fi verification token (`donate.kofi_token`), Patreon creator access token (`donate.patreon_token`).
+OAuth tokens of signed-in platforms (vault key `auth.accounts`; a plaintext `accounts.json` from older versions is
+migrated and deleted — verified).
 Stream key / WHIP bearer token / custom RTMP password of the main destination (`stream@<profile>.<field>`) and of
 each multistream destination (`target.<id>.<field>`), Google + Kick client secrets, Remote API password.
 settings.json and profile files never contain them (fields stripped by `apply_settings`, properties updates and boot

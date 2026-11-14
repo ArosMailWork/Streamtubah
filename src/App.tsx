@@ -4,6 +4,7 @@ import { ChatDrawer } from "./components/ChatDrawer";
 import { StatusBar } from "./components/Controls";
 import { SettingsDialog, SettingsTab } from "./components/SettingsDialog";
 import { NewMachineDialog } from "./components/NewMachineDialog";
+import { UpdateButton, useStartupUpdateCheck } from "./components/Updates";
 import { applyPreset, LayoutDrawer } from "./layout/LayoutDrawer";
 import { LayoutView } from "./layout/LayoutView";
 import { DragGhost } from "./layout/dock";
@@ -23,6 +24,7 @@ function Toasts() {
 
 export default function App() {
   useBackendEvents();
+  useStartupUpdateCheck();
   const state = useStore(studioStore);
   const { presets, active } = useLayouts();
   const preset = presets.find((p) => p.id === active) ?? presets[0];
@@ -74,6 +76,7 @@ export default function App() {
           );
         })()}
         <span className="grow" />
+        <UpdateButton live={live} />
         <button onClick={() => setSettingsTab("stream")}>⚙ Settings</button>
       </header>
       <div className="main-row">

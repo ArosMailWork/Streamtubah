@@ -105,6 +105,14 @@ const DOCS: Record<string, SourceDoc> = {
       "If you also have Desktop Audio, that app will be heard twice; mute one of them.",
     ],
   },
+  streamtubah_plugin_audio: {
+    category: "Audio", icon: "🧩",
+    summary: "Plays audio sent by a JavaScript plugin or another app (voice changer, soundboard, TTS) on a named channel.",
+    tips: [
+      "Use the same channel name as the plugin (Properties shows the WebSocket address).",
+      "To change your own voice, mute the normal Mic in the mixer and let the plugin's channel carry it.",
+    ],
+  },
   browser_source: {
     category: "Web & Text", icon: "🌐",
     summary: "A web page rendered on stream: alerts, chat overlay, widgets, timers.",

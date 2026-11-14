@@ -46,6 +46,10 @@ React UI (WebView2) --invoke/events--> Rust (src-tauri)
 See `phase-02-audio-ports-integrations.md`. Part A (audio safety, ports, control API) done 2026-11-14;
 B (chat) done; C (OAuth platforms: waiting for developer app client IDs) and D (donations) pending.
 
+## Phase 6
+See `phase-06-se-sl-split-output-plugins.md`: StreamElements/Streamlabs events, stream-only / recording-only sources
+(phase 5.7), JavaScript plugins + Plugin Audio source. Done 2026-11-14.
+
 ## Risks
 - WebView2 vs native child z-order and DPI scaling → compute physical px from devicePixelRatio.
 - HTML popups cannot overlay preview → hide preview while modals open.

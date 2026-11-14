@@ -130,6 +130,11 @@ pub fn filter_add(state: State<AppState>, source: String, type_id: String, name:
 }
 
 #[tauri::command]
+pub fn source_set_show_in(state: State<AppState>, source: String, mode: String) -> R<Option<String>> {
+    with(&state, |s| s.source_set_show_in(&source, &mode))
+}
+
+#[tauri::command]
 pub fn filter_remove(state: State<AppState>, source: String, filter: String) -> R<()> {
     with(&state, |s| s.filter_remove(&source, &filter))
 }
@@ -224,21 +229,34 @@ pub fn settings_get(state: State<AppState>) -> R<AppSettings> {
 }
 
 #[tauri::command]
-pub fn settings_set(app: tauri::AppHandle, state: State<AppState>, settings: AppSettings) -> R<()> {
+pub fn settings_set(app: tauri::AppHandle, state: State<AppState>, mut settings: AppSettings) -> R<()> {
     // Compare and reconfigure with the settings as actually applied: the UI never sends secrets
     // (e.g. the API password arrives blank and is kept by apply_settings).
-    let (api, chat, hotkeys) = with(&state, |s| {
+    let (api, chat, hotkeys, alerts_changed, donate) = with(&state, |s| {
         let before = (s.settings.api.clone(), s.settings.chat.clone(), s.settings.hotkeys.clone());
+        let (alerts_before, donate_before) = (s.settings.alerts.clone(), s.settings.donate.clone());
+        // Enabled plugins change only through js_plugin_set_enabled (a stale draft must not disable them).
+        settings.plugins.js = s.settings.plugins.js.clone();
         s.apply_settings(settings)?;
         let api_changed = serde_json::to_value(&before.0).ok() != serde_json::to_value(&s.settings.api).ok();
         Ok((
             api_changed.then(|| s.settings.with_secrets().api),
             (before.1 != s.settings.chat).then(|| s.settings.chat.clone()),
             (before.2 != s.settings.hotkeys).then(|| s.settings.hotkeys.clone()),
+            alerts_before != s.settings.alerts,
+            (donate_before != s.settings.donate).then(|| s.settings.donate.clone()),
         ))
     })?;
+    if alerts_changed {
+        crate::alerts::config_changed();
+    }
+    if let Some(cfg) = donate {
+        crate::alerts::donate::configure(&cfg);
+    }
     if let Some(cfg) = api {
         crate::api::configure(&cfg);
+        // Plugins carry the API port and must reconnect; windows are rebuilt off the main thread.
+        std::thread::spawn(crate::jsplugins::restart_all);
     }
     if let Some(cfg) = chat {
         crate::chat::configure(&cfg);
@@ -652,7 +670,132 @@ pub fn secret_set(app: tauri::AppHandle, window: tauri::WebviewWindow, state: St
     if let Some(cfg) = api_cfg {
         crate::api::configure(&cfg);
     }
+    // Relay secret ids equal their vault keys; other ids are ignored.
+    crate::alerts::donate::restart_relay(&id);
     use tauri::Emitter;
     let _ = app.emit("secrets:changed", ());
     Ok(())
+}
+
+// Updates ----------------------------------------------------------------------
+
+/// Async: network access must not block the UI thread.
+#[tauri::command]
+pub async fn update_check() -> R<crate::updater::UpdateInfo> {
+    tauri::async_runtime::spawn_blocking(crate::updater::check).await.map_err(|e| e.to_string())?
+}
+
+/// Downloads, verifies and installs the update; returns the installed version.
+#[tauri::command]
+pub async fn update_install() -> R<String> {
+    tauri::async_runtime::spawn_blocking(crate::updater::install).await.map_err(|e| e.to_string())?
+}
+
+/// Restarts into the installed update; refused while live so a stream is never cut.
+#[tauri::command]
+pub fn update_restart(app: tauri::AppHandle, state: State<AppState>) -> R<()> {
+    with(&state, |s| {
+        if s.outputs.any_active() {
+            return Err("Stop streaming, recording, replay buffer and virtual camera before restarting".into());
+        }
+        Ok(())
+    })?;
+    crate::updater::relaunch()?;
+    app.exit(0);
+    Ok(())
+}
+
+// Alerts / donations ------------------------------------------------------------
+
+#[tauri::command]
+pub fn alerts_kinds() -> Vec<(&'static str, &'static str)> {
+    crate::alerts::KINDS.to_vec()
+}
+
+#[tauri::command]
+pub fn alerts_test(kind: String) -> R<()> {
+    crate::alerts::test(&kind)
+}
+
+#[tauri::command]
+pub fn alerts_recent() -> Vec<crate::alerts::AlertEvent> {
+    crate::alerts::recent()
+}
+
+#[tauri::command]
+pub fn alerts_replay(id: String) -> R<()> {
+    crate::alerts::replay(&id)
+}
+
+#[tauri::command]
+pub fn alerts_skip() {
+    crate::alerts::skip();
+}
+
+/// Copies a chosen image/sound into the app's alert-media folder; returns its name.
+#[tauri::command]
+pub fn alerts_import_media(path: String) -> R<String> {
+    crate::alerts::import_media(&path)
+}
+
+/// Adds the Alert Box overlay (full canvas, audio through the mixer) to the current scene.
+#[tauri::command]
+pub fn alerts_add_to_scene(state: State<AppState>) -> R<i64> {
+    with(&state, |s| {
+        let scene = s.current_scene_name().ok_or("No scene")?;
+        let (w, h) = crate::obs::runtime::canvas_size();
+        let url = format!("http://127.0.0.1:{}/overlay/alerts", s.settings.api.port);
+        let settings = serde_json::json!({ "url": url, "width": w, "height": h, "reroute_audio": true, "shutdown": false });
+        s.input_create(&scene, "browser_source", "Alert Box", &settings, true)
+    })
+}
+
+#[tauri::command]
+pub fn donate_status() -> Value {
+    crate::alerts::donate::status()
+}
+
+// ---------------------------------------------------------------------------
+// JavaScript plugins (windows are created/destroyed here: async keeps them off the main thread)
+
+#[tauri::command]
+pub fn js_plugins_list() -> Value {
+    serde_json::json!({ "folder": crate::jsplugins::folder(), "plugins": crate::jsplugins::list() })
+}
+
+/// Enabling approves the permissions currently listed in the plugin's manifest.
+#[tauri::command]
+pub async fn js_plugin_set_enabled(state: State<'_, AppState>, id: String, enabled: bool) -> R<()> {
+    let approved = with(&state, |s| {
+        if enabled {
+            let perms = crate::jsplugins::manifest_permissions(&id)?;
+            s.settings.plugins.js.insert(id.clone(), perms);
+        } else {
+            s.settings.plugins.js.remove(&id);
+        }
+        s.save_settings()?;
+        Ok(s.settings.plugins.js.clone())
+    })?;
+    crate::jsplugins::configure(&approved);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn js_plugin_reload(id: String) -> R<()> {
+    crate::jsplugins::reload(&id)
+}
+
+#[tauri::command]
+pub async fn js_plugin_show(id: String, visible: bool) -> R<()> {
+    crate::jsplugins::show(&id, visible)
+}
+
+#[tauri::command]
+pub fn js_plugin_logs(id: String) -> Vec<Value> {
+    crate::jsplugins::logs(&id)
+}
+
+#[tauri::command]
+pub fn js_plugins_open_folder() -> R<()> {
+    tauri_plugin_opener::open_path(crate::jsplugins::folder(), None::<&str>).map_err(|e| e.to_string())
 }

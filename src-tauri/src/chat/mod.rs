@@ -44,6 +44,9 @@ pub struct ChatMessage {
     pub kind: &'static str,
     pub amount: Option<String>,
     pub ts: u64,
+    /// Alert raised by this message (subs, gifts, bits, raids, Super Chats…). Not sent to the UI.
+    #[serde(skip)]
+    pub alert: Option<crate::alerts::AlertEvent>,
 }
 
 impl ChatMessage {
@@ -61,6 +64,7 @@ impl ChatMessage {
             kind: "message",
             amount: None,
             ts,
+            alert: None,
         }
     }
 }
@@ -166,7 +170,10 @@ pub(crate) fn set_status(platform: &'static str, state: &'static str, detail: &s
     let _ = hub.app.emit("chat:status", json!({ "platform": platform, "state": state, "detail": detail }));
 }
 
-pub(crate) fn publish(msg: ChatMessage) {
+pub(crate) fn publish(mut msg: ChatMessage) {
+    if let Some(alert) = msg.alert.take() {
+        crate::alerts::emit(alert);
+    }
     let Some(hub) = HUB.get() else { return };
     {
         let mut h = hub.history.lock().unwrap();

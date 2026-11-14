@@ -17,6 +17,16 @@ npm run tauri dev
 ```
 For release builds run `bash scripts/setup-obs.sh release` before `npm run tauri build`.
 
+## Releasing (portable zip + self-update)
+1. Once: `cd src-tauri && cargo run --example release_tool -- keygen` creates the signing key in
+   `%USERPROFILE%\.streamtubah\update-signing.key` (keep a backup; never commit it). Its public key is in
+   `src-tauri/src/updater.rs`.
+2. Bump the version in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` and `package.json`.
+3. `bash scripts/setup-obs.sh release` (once per OBS version), then `bash scripts/package.sh "release notes"`.
+4. Publish the three files from `release/<version>/` with the `gh release create …` line the script prints.
+   Installed copies read `latest.json` from the latest release, verify the Ed25519 signature and replace only
+   `streamtubah.exe`. A release with a different OBS runtime asks users to download the full zip.
+
 ## Architecture
 ```
 React UI (WebView2) ──invoke/events──► Rust (src-tauri/src)
@@ -35,6 +45,8 @@ React UI (WebView2) ──invoke/events──► Rust (src-tauri/src)
 - **OBS plug-ins**: put them in `%APPDATA%/com.streamtubah.app/plugins` (Settings → Plugins → Open).
 - **VST 2.x** voice plug-ins: Voice Studio → "VST 2.x plug-in".
 - **External apps** (voice changers, AI voice, scripts): [docs/audio-bridge.md](docs/audio-bridge.md).
+- **Your own JavaScript plugins** (voice changer into a "Plugin Audio" source, soundboards, chat bots…):
+  [docs/js-plugins.md](docs/js-plugins.md), sample in `examples/js-plugins/voice-fx`.
 - **Remote control** (Stream Deck, Touch Portal, Streamer.bot…): [docs/control-api.md](docs/control-api.md).
 - **Chat**: Twitch, Kick and YouTube chat without login (Settings → Chat); overlay at
   `http://127.0.0.1:4455/overlay/chat`. Platform login setup: [docs/platform-apps.md](docs/platform-apps.md).

@@ -1,6 +1,6 @@
 # Phase 5 — Sources & mixer parity with Streamlabs, Auto-Optimize
 
-Status: 5.1-5.6 done, 5.7 deferred by user · 2026-11-14 · Runs before multistream (phase 4.5+), at user request.
+Status: 5.1-5.7 done · 2026-11-14 (5.7 implemented in phase 6.2) · Runs before multistream (phase 4.5+), at user request.
 
 ## Decisions (user)
 - All four groups: add-source + list management, transforms, advanced mixer, multiple devices + multi-track.

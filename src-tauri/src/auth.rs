@@ -4,14 +4,14 @@
 //! - Google/YouTube: installed-app flow, loopback redirect + PKCE.
 //! - Kick: authorization code + PKCE on a fixed loopback port (Kick also requires the client secret).
 //!
-//! Tokens are stored in `accounts.json` in the app data folder (like OBS stores its
-//! service tokens) and refreshed automatically.
+//! Tokens are stored in the encrypted secret vault (`vault.rs`, key `auth.accounts`) and
+//! refreshed automatically. A plaintext `accounts.json` from older versions is moved there.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
 use crate::chat::raw_http;
-use crate::settings::{PlatformApps, random_token, write_atomic};
+use crate::settings::{PlatformApps, random_token};
 
 pub const KICK_REDIRECT_PORT: u16 = 17563;
 
@@ -50,26 +50,34 @@ pub struct AccountInfo {
     pub display_name: String,
 }
 
-static PATH: OnceLock<PathBuf> = OnceLock::new();
+const VAULT_KEY: &str = "auth.accounts";
 static ACCOUNTS: LazyLock<Mutex<HashMap<String, Account>>> = LazyLock::new(Default::default);
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-pub fn init(path: PathBuf) {
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        if let Ok(map) = serde_json::from_str::<HashMap<String, Account>>(&text) {
-            *ACCOUNTS.lock().unwrap() = map;
-        }
+/// Loads accounts from the vault (call after `vault::init`). `legacy` is the old plaintext
+/// `accounts.json`, migrated into the vault and deleted.
+pub fn init(legacy: PathBuf) {
+    let parse = |t: &str| serde_json::from_str::<HashMap<String, Account>>(t).ok();
+    if let Some(map) = crate::vault::get(VAULT_KEY).as_deref().and_then(parse) {
+        *ACCOUNTS.lock().unwrap() = map;
+    } else if let Some(map) = std::fs::read_to_string(&legacy).ok().as_deref().and_then(parse) {
+        *ACCOUNTS.lock().unwrap() = map;
+        save();
     }
-    let _ = PATH.set(path);
+    if crate::vault::get(VAULT_KEY).is_some() || ACCOUNTS.lock().unwrap().is_empty() {
+        let _ = std::fs::remove_file(&legacy);
+    }
 }
 
 fn save() {
-    let Some(path) = PATH.get() else { return };
-    if let Ok(text) = serde_json::to_string_pretty(&*ACCOUNTS.lock().unwrap()) {
-        let _ = write_atomic(path, &text);
+    let map = ACCOUNTS.lock().unwrap();
+    let text = if map.is_empty() { String::new() } else { serde_json::to_string(&*map).unwrap_or_default() };
+    drop(map);
+    if let Err(e) = crate::vault::set(VAULT_KEY, &text) {
+        eprintln!("saving accounts failed: {e}");
     }
 }
 

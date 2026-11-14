@@ -117,6 +117,8 @@ pub struct ItemInfo {
     pub group: bool,
     /// Id of the folder containing this item.
     pub parent: Option<i64>,
+    /// "both" | "stream" | "record" (per source, see split.rs).
+    pub show_in: &'static str,
 }
 
 pub struct StudioPaths {
@@ -411,6 +413,7 @@ impl Studio {
                     type_name: if group { "Folder".into() } else { from_cstr(sys::obs_source_get_display_name(c.as_ptr())) },
                     group,
                     parent,
+                    show_in: crate::split::show_in(&src).as_str(),
                 }
         }
     }
@@ -895,6 +898,10 @@ impl Studio {
             let out = unsafe { &mut *(data as *mut Vec<Value>) };
             unsafe {
                 let id = sys::obs_source_get_id(f);
+                // The stream/recording gate is managed by "Show in", not the filter list.
+                if from_cstr(id) == crate::split::GATE_ID {
+                    return;
+                }
                 out.push(json!({
                     "name": from_cstr(sys::obs_source_get_name(f)),
                     "type_id": from_cstr(id),
@@ -933,6 +940,18 @@ impl Studio {
         unsafe { sys::obs_source_filter_add(src.as_ptr(), f.as_ptr()) };
         self.touch();
         Ok(final_name)
+    }
+
+    /// Limits a source to the stream or the recording ("both" = everywhere). Returns a note
+    /// when a running recording cannot follow the change (it shares the stream's canvas).
+    pub fn source_set_show_in(&mut self, source: &str, mode: &str) -> Result<Option<String>> {
+        let mode = crate::split::ShowIn::parse(mode).ok_or("Unknown mode")?;
+        crate::split::set_show_in(&self.find_source(source)?, mode)?;
+        self.emit("studio:changed", Value::Null);
+        self.touch();
+        let recording = self.outputs.is_running("record") || self.outputs.is_running("replay");
+        Ok((recording && !self.outputs.record_split_active() && mode != crate::split::ShowIn::Both)
+            .then(|| "The running recording keeps showing the stream picture; the change applies from the next recording.".into()))
     }
 
     pub fn filter_remove(&mut self, source: &str, filter: &str) -> Result<()> {
@@ -1213,21 +1232,11 @@ impl Studio {
         let _ = self.save_settings();
         self.outputs.force_stop_all();
         self.previews.clear();
-        if let Some(p) = self.preview_scene.take() {
-            unsafe { sys::obs_source_dec_showing(p.as_ptr()) };
-        }
-        if let Ok(mut m) = self.mixer.lock() {
-            m.clear();
-        }
-        self.desktop.set_device(None);
-        self.mic.set_device(None);
-        for ch in &mut self.extra {
-            ch.set_device(None);
-        }
         unsafe { sys::obs_set_output_source(CH_TRANSITION, std::ptr::null_mut()) };
-        self.current = None;
+        // Remove every source (like switching collections) and wait for libobs to destroy them,
+        // so Browser Sources close their CEF browsers before obs_shutdown stops CEF.
+        self.clear_scene_data();
         self.transition = None;
-        self.scenes.clear();
     }
 }
 

@@ -24,6 +24,9 @@
 - VST 2.x via obs-vst (restored by `scripts/setup-obs.sh`). Editor buttons are hidden: the obs-vst editor is a Qt
   widget and needs a QApplication, so opening it would abort the app.
 - Audio Bridge: WebSocket `/audio/<channel>` on the API port, f32le interleaved stereo 48 kHz, latency buffer + underrun re-prime.
+  Auth: API password (`?password=`) or a JS plugin token with the `audio` permission (see js-plugins.md).
+- Plugin Audio source (`streamtubah_plugin_audio`, `plugin_audio.rs`): audio-only input fed by `/audio-source/<channel>`
+  (same format/auth); lets plugins and external apps add a new sound source (voice changer output, soundboard).
 - Virtual-mic apps: choose their device as the Mic; per-app audio: "Application Audio Capture" source.
 - WHIP/WebRTC service `whip_custom` (obs-webrtc); the Opus audio encoder is used when the service rejects AAC.
 - DeckLink module restored (needs Blackmagic Desktop Video drivers).

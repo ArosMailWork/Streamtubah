@@ -3,7 +3,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { AccountInfo, api, ChatMessage, ChatStatus, errorText, Platform, PopoutState, Stats, StudioState } from "./api";
 
-function createStore<T>(initial: T) {
+export function createStore<T>(initial: T) {
   let value = initial;
   const subs = new Set<() => void>();
   return {
@@ -131,7 +131,13 @@ export function useBackendEvents() {
       listen<string>("app:error", (e) => toast(e.payload, "error")),
       listen("preview:delete", () => act(() => api.itemRemoveSelected())),
       listen<Record<string, [number, number]>>("obs:levels", (e) => levelsStore.set(e.payload)),
-      listen<Stats>("obs:stats", (e) => statsStore.set(e.payload)),
+      listen<Stats>("obs:stats", (e) => {
+        statsStore.set(e.payload);
+        // The refresh on an output "stop" signal can still see the output as active; the
+        // per-second stats carry the settled state, so resync the buttons when they differ.
+        const shown = studioStore.get()?.outputs;
+        if (shown && JSON.stringify(shown) !== JSON.stringify(e.payload.outputs)) refresh();
+      }),
       listen<ChatMessage>("chat:message", (e) => pushChat(e.payload)),
       listen<PopoutState>("popout:state", (e) => popoutStore.set(e.payload)),
       listen<{ platform: Platform; state: string; message?: string; login?: string; user_code?: string; verification_uri?: string }>(

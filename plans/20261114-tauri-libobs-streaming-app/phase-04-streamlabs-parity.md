@@ -1,6 +1,6 @@
 # Phase 4 — Streamlabs parity (hotkeys, virtual cam, profiles, multistream, login, alerts, donations, update)
 
-Status: 4.1-4.6 done · 2026-11-14
+Status: 4.1-4.6, 4.8 (except direct Twitch follows), 4.9 (Ko-fi, Patreon, StreamElements, Streamlabs), 4.11 done · 2026-11-14
 
 ## Decisions (user)
 - Scope: everything except installer and macOS. Ship as a portable zip; auto-update from GitHub Releases
@@ -26,6 +26,11 @@ Status: 4.1-4.6 done · 2026-11-14
 | 4.10 | TikTok + Facebook chat | TikTok via signing service (unofficial, fragile); Facebook Graph live comments (Meta app review) | messages in chat drawer |
 | 4.11 | Auto-update | check GitHub latest release, download app-only zip, verify ed25519 signature, swap exe (rename running exe) on restart; OBS runtime only when its version changes | old build updates to new |
 
+## Deferred by user (2026-11-14)
+- 4.10 TikTok + Facebook chat: postponed (TikTok only via an unofficial signing service; Facebook needs Meta App Review).
+- 4.7 / direct Twitch follows: waiting for developer app client IDs (docs/platform-apps.md).
+- 4.3: virtual camera registration needs one manual UAC confirmation by the user.
+
 ## Order
 4.1 → 4.2–4.4 → 4.5 → 4.6 → 4.7 → 4.8 → 4.9 → 4.10 → 4.11
 
@@ -50,3 +55,8 @@ Status: 4.1-4.6 done · 2026-11-14
 - 4.6 Secrets: DPAPI vault + capture-protected Secrets window; full test matrix in `.claude/features/secrets.md`.
   Found and fixed on the way: API restarted with a blank password after saving settings; API listener rebind race.
 - App icon replaced (was the default Tauri icon shared with pngtuber); source `src-tauri/icons/app-icon.png`.
+- 4.11 Portable packaging + signed self-update (scripts/package.sh, updater.rs); end-to-end tested with a local server.
+- OAuth tokens moved into the encrypted vault. Exit crash during Auto-Optimize found and fixed.
+- 4.8/4.9 Alerts (Alert Box overlay, Twitch/Kick/YouTube events without login) + Ko-fi (cloudflared quick tunnel) +
+  Patreon (polling). Twitch follows wait for Twitch sign-in. User chose Ko-fi + Patreon first (no VietQR /
+  StreamElements / TTS for now). Low-memory UI option added (WebView2 189 → 114 MB).

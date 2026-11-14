@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { JsPluginsSection } from "./JsPlugins";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, AppSettings, AudioDevice, EncoderInfo, PluginsInfo, TypeInfo } from "../api";
 import { accountsStore, act, authPendingStore, studioStore, toast, useStore } from "../store";
@@ -9,8 +10,11 @@ import { NamedSetOps, NamedSetPicker } from "./NamedSets";
 import { AutoOptimize } from "./AutoOptimize";
 import { DestinationsEditor } from "./Destinations";
 import { SecretFields, useSecrets } from "./SecretField";
+import { AboutTab } from "./Updates";
+import { AlertsTab } from "./AlertsTab";
+import { DonationsTab } from "./DonationsTab";
 
-export type SettingsTab = "optimize" | "stream" | "output" | "video" | "audio" | "transitions" | "hotkeys" | "chat" | "accounts" | "plugins" | "api";
+export type SettingsTab = "optimize" | "stream" | "output" | "video" | "audio" | "transitions" | "hotkeys" | "alerts" | "donations" | "chat" | "accounts" | "plugins" | "api" | "about";
 type Tab = SettingsTab;
 const TABS: { id: Tab; label: string }[] = [
   { id: "optimize", label: "Auto-Optimize" },
@@ -20,10 +24,13 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "audio", label: "Audio" },
   { id: "transitions", label: "Transitions" },
   { id: "hotkeys", label: "Hotkeys" },
+  { id: "alerts", label: "Alerts" },
+  { id: "donations", label: "Donations" },
   { id: "chat", label: "Chat" },
   { id: "accounts", label: "Accounts" },
   { id: "plugins", label: "Plugins" },
   { id: "api", label: "Remote API" },
+  { id: "about", label: "About & Updates" },
 ];
 
 function DeviceSelect(props: {
@@ -212,6 +219,15 @@ export function SettingsDialog(props: { onClose: () => void; live: boolean; init
           {(tab === "stream" || tab === "output" || tab === "video") && (
             <NamedSetPicker label="Profile" ops={PROFILE_OPS} disabled={props.live}
               onChanged={() => api.settingsGet().then((s) => { setDraft(s); setFormKey((k) => k + 1); })} />
+          )}
+
+          {tab === "alerts" && <AlertsTab draft={draft} saveNow={saveNow} setDraft={setDraft} />}
+          {tab === "donations" && <DonationsTab draft={draft} saveNow={saveNow} />}
+
+          {tab === "about" && (
+            <AboutTab live={props.live} autoCheck={draft.updates.auto_check}
+              setAutoCheck={(v) => saveNow({ ...draft, updates: { auto_check: v } })}
+              lowMemory={draft.ui.low_memory} setLowMemory={(v) => saveNow({ ...draft, ui: { low_memory: v } })} />
           )}
 
           {tab === "optimize" && (
@@ -559,6 +575,8 @@ export function SettingsDialog(props: { onClose: () => void; live: boolean; init
 
           {tab === "plugins" && (
             <>
+              <JsPluginsSection />
+              <h3>OBS plug-ins</h3>
               <p className="muted">
                 Streamtubah loads standard OBS Studio plug-ins (sources, filters, encoders, outputs). Put a plug-in in the
                 folder below using the OBS layout <code>&lt;name&gt;/bin/64bit/&lt;name&gt;.dll</code> + <code>&lt;name&gt;/data/</code>,

@@ -31,3 +31,8 @@
   while live. Canvas, scenes and stream keys untouched. Upload result kept in localStorage for the multistream estimate.
 - Verified 2026-11-14 (GTX 1050 Ti, i5-14400F, ~425 Mbit/s, Twitch): level 1 → 720p30 3600 kbps p1; level 3 → 1080p60
   6000 kbps p5; level 5 → 1080p60 p7 fullres (Twitch blocks 1440p). New-PC dialog auto-ran and rendered results.
+
+## Exit safety
+`cancel_and_wait()` runs first in the app's Exit handler: a running test notices `CANCEL` within 50 ms, force-stops
+and releases its output/encoders, skips restoring video, and `RUNNING` drops; then libobs shuts down. Before this,
+closing the app during a test crashed it (0xC0000005 inside obs_shutdown). Verified: closing 3/7/12 s into a test exits 0.

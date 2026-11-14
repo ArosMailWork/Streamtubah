@@ -49,6 +49,10 @@ fn vault_key(s: &AppSettings, id: &str) -> Result<String, String> {
     match id {
         "platform.google_client_secret" => Ok(GOOGLE_SECRET.into()),
         "platform.kick_client_secret" => Ok(KICK_SECRET.into()),
+        "donate.kofi_token" => Ok(crate::alerts::donate::KOFI_TOKEN.into()),
+        "donate.patreon_token" => Ok(crate::alerts::donate::PATREON_TOKEN.into()),
+        "donate.streamelements_token" => Ok(crate::alerts::relay::SE_TOKEN.into()),
+        "donate.streamlabs_token" => Ok(crate::alerts::relay::SL_TOKEN.into()),
         _ => Err("Unknown secret".into()),
     }
 }
@@ -70,6 +74,11 @@ pub fn list(s: &AppSettings) -> Vec<SecretInfo> {
     push("platform.google_client_secret".into(), "Platform sign-in".into(), "Google client secret", !full.platform_apps.google_client_secret.is_empty());
     push("platform.kick_client_secret".into(), "Platform sign-in".into(), "Kick client secret", !full.platform_apps.kick_client_secret.is_empty());
     push("api.password".into(), "Remote control API".into(), "API password", !full.api.password.is_empty());
+    let has = |k: &str| vault::get(k).is_some_and(|v| !v.is_empty());
+    push("donate.kofi_token".into(), "Donations".into(), "Ko-fi verification token", has(crate::alerts::donate::KOFI_TOKEN));
+    push("donate.patreon_token".into(), "Donations".into(), "Patreon creator access token", has(crate::alerts::donate::PATREON_TOKEN));
+    push("donate.streamelements_token".into(), "Donations".into(), "StreamElements JWT token", has(crate::alerts::relay::SE_TOKEN));
+    push("donate.streamlabs_token".into(), "Donations".into(), "Streamlabs socket API token", has(crate::alerts::relay::SL_TOKEN));
     out
 }
 

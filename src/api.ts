@@ -15,7 +15,11 @@ export interface ItemInfo {
   group: boolean;
   /** Folder containing this item. */
   parent: number | null;
+  /** Where the source appears (per source, not per item). */
+  show_in: ShowIn;
 }
+
+export type ShowIn = "both" | "stream" | "record";
 
 export type TransformAction =
   | "fit" | "stretch" | "center" | "reset"
@@ -91,6 +95,59 @@ export interface SecretInfo {
   set: boolean;
 }
 
+export interface UpdateInfo {
+  current: string;
+  available: boolean;
+  version: string;
+  notes: string;
+  /** The release also changes the OBS runtime: only the full package can update it. */
+  needs_full_package: boolean;
+  full_url: string;
+}
+
+export interface AlertStyle {
+  enabled: boolean;
+  template: string;
+  /** File in alert-media ("" = built-in icon). */
+  image: string;
+  /** File in alert-media, "" = built-in chime, "none" = silent. */
+  sound: string;
+  volume: number;
+  duration_ms: number;
+  animation: string;
+  text_color: string;
+  accent_color: string;
+  font_size: number;
+  min_amount: number;
+  show_message: boolean;
+}
+
+export interface AlertSettings {
+  styles: Record<string, AlertStyle>;
+  gap_ms: number;
+}
+
+export interface AlertEvent {
+  id: string;
+  kind: string;
+  platform: string;
+  name: string;
+  amount: number | null;
+  amount_text: string | null;
+  count: number | null;
+  message: string;
+  ts: number;
+  test: boolean;
+  source?: string;
+}
+
+export interface DonateStatus {
+  kofi: { enabled: boolean; state: string; public_url: string | null; webhook_url: string | null };
+  patreon: { enabled: boolean; state: string };
+  streamelements: { enabled: boolean; state: string };
+  streamlabs: { enabled: boolean; state: string };
+}
+
 export interface AudioInfo {
   name: string;
   type_id: string;
@@ -141,6 +198,26 @@ export interface PluginsInfo {
   folder: string;
   modules: ModuleInfo[];
   bridges: [string, boolean][];
+}
+
+export interface JsPlugin {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  permissions: string[];
+  enabled: boolean;
+  running: boolean;
+  error: string | null;
+  manifest_error: string | null;
+}
+
+export interface JsPluginLog {
+  id: string;
+  level: string;
+  text: string;
+  ts: number;
 }
 
 export type Platform = "twitch" | "youtube" | "kick";
@@ -266,6 +343,10 @@ export interface AppSettings {
   /** Action id -> accelerator, e.g. "Ctrl+Shift+F1". */
   hotkeys: Record<string, string>;
   optimize: { level: number; machine: string };
+  updates: { auto_check: boolean };
+  ui: { low_memory: boolean };
+  alerts: AlertSettings;
+  donate: { kofi_enabled: boolean; kofi_port: number; patreon_enabled: boolean; streamelements_enabled: boolean; streamlabs_enabled: boolean };
   transition: { type_id: string; duration_ms: number };
   audio: {
     desktop_device: string;
@@ -279,7 +360,8 @@ export interface AppSettings {
     mic4_device: string;
   };
   api: { enabled: boolean; port: number; password: string; allow_lan: boolean };
-  plugins: { load_obs_studio_plugins: boolean };
+  /** `js` is managed by jsPluginSetEnabled (the backend ignores it in settingsSet). */
+  plugins: { load_obs_studio_plugins: boolean; js: Record<string, string[]> };
   chat: { twitch: string; kick: string; youtube: string };
   platform_apps: {
     twitch_client_id: string;
@@ -388,6 +470,7 @@ export const api = {
   filterAdd: (source: string, typeId: string, name: string) =>
     invoke<string>("filter_add", { source, typeId, name }),
   filterRemove: (source: string, filter: string) => invoke<void>("filter_remove", { source, filter }),
+  sourceSetShowIn: (source: string, mode: ShowIn) => invoke<string | null>("source_set_show_in", { source, mode }),
   filterSetEnabled: (source: string, filter: string, enabled: boolean) =>
     invoke<void>("filter_set_enabled", { source, filter, enabled }),
   filterMove: (source: string, filter: string, up: boolean) => invoke<void>("filter_move", { source, filter, up }),
@@ -425,6 +508,12 @@ export const api = {
   voiceBypassed: (source: string) => invoke<boolean>("voice_bypassed", { source }),
   pluginsInfo: () => invoke<PluginsInfo>("plugins_info"),
   pluginsOpenFolder: () => invoke<void>("plugins_open_folder"),
+  jsPluginsList: () => invoke<{ folder: string; plugins: JsPlugin[] }>("js_plugins_list"),
+  jsPluginSetEnabled: (id: string, enabled: boolean) => invoke<void>("js_plugin_set_enabled", { id, enabled }),
+  jsPluginReload: (id: string) => invoke<void>("js_plugin_reload", { id }),
+  jsPluginShow: (id: string, visible: boolean) => invoke<void>("js_plugin_show", { id, visible }),
+  jsPluginLogs: (id: string) => invoke<JsPluginLog[]>("js_plugin_logs", { id }),
+  jsPluginsOpenFolder: () => invoke<void>("js_plugins_open_folder"),
   apiInfo: () => invoke<ApiInfo>("api_info"),
   chatHistory: () => invoke<ChatMessage[]>("chat_history"),
   chatStatus: () => invoke<Partial<Record<Platform, ChatStatus>>>("chat_status"),
@@ -472,6 +561,17 @@ export const api = {
   secretsList: () => invoke<{ items: SecretInfo[]; lost: boolean }>("secrets_list"),
   secretGet: (id: string) => invoke<string>("secret_get", { id }),
   secretSet: (id: string, value: string) => invoke<void>("secret_set", { id, value }),
+  updateCheck: () => invoke<UpdateInfo>("update_check"),
+  updateInstall: () => invoke<string>("update_install"),
+  updateRestart: () => invoke<void>("update_restart"),
+  alertsKinds: () => invoke<[string, string][]>("alerts_kinds"),
+  alertsTest: (kind: string) => invoke<void>("alerts_test", { kind }),
+  alertsRecent: () => invoke<AlertEvent[]>("alerts_recent"),
+  alertsReplay: (id: string) => invoke<void>("alerts_replay", { id }),
+  alertsSkip: () => invoke<void>("alerts_skip"),
+  alertsImportMedia: (path: string) => invoke<string>("alerts_import_media", { path }),
+  alertsAddToScene: () => invoke<number>("alerts_add_to_scene"),
+  donateStatus: () => invoke<DonateStatus>("donate_status"),
   optimizeApply: (rec: OptimizeRecommendation) => invoke<void>("optimize_apply", { rec }),
 };
 

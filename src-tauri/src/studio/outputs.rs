@@ -139,6 +139,10 @@ pub struct Outputs {
     /// Raw program video for the "OBS Virtual Camera" DirectShow device; no encoders.
     virtualcam: Option<OutputSlot>,
     video_enc: Option<Encoder>,
+    /// Second canvas + its own video encoder for recording / replay buffer, used when a source
+    /// is limited to the stream or the recording (see split.rs). Created on start, dropped when
+    /// both are idle. Tuple order matters: the encoder is released before its canvas.
+    record_view: Option<(Encoder, crate::split::RecordView)>,
     /// One AAC encoder per audio track (mixer index 0-5), created on demand.
     aac_enc: [Option<Encoder>; 6],
     /// WebRTC (WHIP) only accepts Opus; streams carry a single track.
@@ -170,6 +174,7 @@ impl Outputs {
             replay: None,
             virtualcam: None,
             video_enc: None,
+            record_view: None,
             aac_enc: Default::default(),
             opus_enc: None,
             targets: HashMap::new(),
@@ -219,6 +224,7 @@ impl Outputs {
     pub fn invalidate_encoders(&mut self) {
         if !self.any_active() {
             self.video_enc = None;
+            self.record_view = None;
             self.aac_enc = Default::default();
             self.opus_enc = None;
         }
@@ -249,22 +255,48 @@ impl Outputs {
     }
 
     fn create_video_encoder(&mut self, s: &OutputSettings) -> Result<(), String> {
-        let id = resolve_video_encoder(&s.video_encoder).ok_or("No video encoder available")?;
-        let vdata = Data::from_json(&s.video_encoder_settings);
-        let (vid, vname) = (cstr(&id), cstr("main_video"));
-        let venc = Encoder::from_raw(unsafe {
-            sys::obs_video_encoder_create(vid.as_ptr(), vname.as_ptr(), vdata.as_ptr(), std::ptr::null_mut())
-        })
-        .ok_or_else(|| format!("Failed to create video encoder '{id}'"))?;
-        unsafe { sys::obs_encoder_set_video(venc.as_ptr(), sys::obs_get_video()) };
-        self.video_enc = Some(venc);
+        self.video_enc = Some(new_video_encoder(s, "main_video", unsafe { sys::obs_get_video() })?);
         Ok(())
+    }
+
+    /// Video encoder for recording / replay buffer: the main one, or the record canvas's own
+    /// encoder while some source is stream-only / recording-only.
+    fn record_video_encoder(&mut self, s: &OutputSettings) -> Result<*mut sys::obs_encoder_t, String> {
+        let record_idle = !Self::is_active(&self.record) && !Self::is_active(&self.replay);
+        if record_idle {
+            self.record_view = None;
+        }
+        if self.record_view.is_none() && record_idle && crate::split::any_split() {
+            let view = crate::split::RecordView::new()?;
+            let enc = new_video_encoder(s, "record_video", view.video())?;
+            self.record_view = Some((enc, view));
+        }
+        match &self.record_view {
+            Some((enc, _)) => Ok(enc.as_ptr()),
+            None => Ok(self.video_enc.as_ref().ok_or("No video encoder")?.as_ptr()),
+        }
+    }
+
+    /// Frees the record canvas once recording and replay buffer have both stopped (GPU time).
+    pub fn release_idle_record_view(&mut self) {
+        if self.record_view.is_some() && !Self::is_active(&self.record) && !Self::is_active(&self.replay) {
+            self.record_view = None;
+        }
+    }
+
+    /// True while recording / replay buffer use the separate record canvas.
+    pub fn record_split_active(&self) -> bool {
+        self.record_view.is_some()
     }
 
     /// Attaches the video encoder and one audio encoder per track, in track order.
     fn attach_encoders(&self, output: &Output, opus: bool, tracks: &[usize]) {
+        self.attach_encoders_with(output, self.video_enc.as_ref().unwrap().as_ptr(), opus, tracks)
+    }
+
+    fn attach_encoders_with(&self, output: &Output, video: *mut sys::obs_encoder_t, opus: bool, tracks: &[usize]) {
         unsafe {
-            sys::obs_output_set_video_encoder(output.as_ptr(), self.video_enc.as_ref().unwrap().as_ptr());
+            sys::obs_output_set_video_encoder(output.as_ptr(), video);
             for (idx, &track) in tracks.iter().enumerate() {
                 let enc = if opus { &self.opus_enc } else { &self.aac_enc[track] };
                 sys::obs_output_set_audio_encoder(output.as_ptr(), enc.as_ref().unwrap().as_ptr(), idx);
@@ -360,8 +392,9 @@ impl Outputs {
         // FLV holds a single audio track.
         let tracks = record_tracks(o.record_tracks, ext == "flv");
         self.ensure_encoders(o, false, &tracks)?;
+        let venc = self.record_video_encoder(o)?;
         let slot = self.record.as_ref().unwrap();
-        self.attach_encoders(&slot.output, false, &tracks);
+        self.attach_encoders_with(&slot.output, venc, false, &tracks);
         start(&slot.output)?;
         self.started[1] = Some(Instant::now());
         Ok(())
@@ -385,8 +418,9 @@ impl Outputs {
         }
         let tracks = record_tracks(o.record_tracks, false);
         self.ensure_encoders(o, false, &tracks)?;
+        let venc = self.record_video_encoder(o)?;
         let slot = self.replay.as_ref().unwrap();
-        self.attach_encoders(&slot.output, false, &tracks);
+        self.attach_encoders_with(&slot.output, venc, false, &tracks);
         start(&slot.output)?;
         self.started[2] = Some(Instant::now());
         Ok(())
@@ -518,11 +552,24 @@ impl Outputs {
         self.virtualcam = None;
         self.targets.clear();
         self.target_services.clear();
+        self.record_view = None;
         self.video_enc = None;
         self.aac_enc = Default::default();
         self.opus_enc = None;
         self.service = None;
     }
+}
+
+fn new_video_encoder(s: &OutputSettings, name: &str, video: *mut sys::video_t) -> Result<Encoder, String> {
+    let id = resolve_video_encoder(&s.video_encoder).ok_or("No video encoder available")?;
+    let vdata = Data::from_json(&s.video_encoder_settings);
+    let (vid, vname) = (cstr(&id), cstr(name));
+    let venc = Encoder::from_raw(unsafe {
+        sys::obs_video_encoder_create(vid.as_ptr(), vname.as_ptr(), vdata.as_ptr(), std::ptr::null_mut())
+    })
+    .ok_or_else(|| format!("Failed to create video encoder '{id}'"))?;
+    unsafe { sys::obs_encoder_set_video(venc.as_ptr(), video) };
+    Ok(venc)
 }
 
 /// True when the service cannot take AAC but accepts Opus (e.g. WHIP / WebRTC).

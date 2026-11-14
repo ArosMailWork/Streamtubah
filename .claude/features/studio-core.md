@@ -44,7 +44,8 @@ transitions/audio as Tauri commands.
   counted from the top, moves in/out of folders with `obs_sceneitem_group_add/remove_item`), `group_create`
   (`obs_scene_insert_group`, may be empty), `group_ungroup`, `item_paste(from_scene, from_id, duplicate)` (reference
   or `obs_source_duplicate`, copies transform/crop/visibility via `get/set_info2`), `filters_copy`
-  (`obs_source_copy_filters`, appends). Folders cannot nest; item ids stay unique per scene.
+  (`obs_source_copy_filters`, appends; the target keeps its own "Show in" gate, see outputs.md). Folders cannot nest;
+  item ids stay unique per scene. `ItemInfo.show_in` = the source's stream/recording mode.
 - `Studio::item` / `item_select` / `item_remove_selected` search folders too. `ItemInfo` has `group` + `parent`;
   `state.items` lists top-most first with children right after their folder.
 - Transforms: `item_rotate_flip` (rotate ±90/180, flip H/V) keeps the bounding box's top-left fixed like OBS;
@@ -59,3 +60,10 @@ transitions/audio as Tauri commands.
 ## Threading
 - Sync Tauri commands + preview window proc run on the main thread; `Studio` is behind a Mutex.
 - Volmeter/signal callbacks never take the Studio lock (atomics / emit only).
+
+## Exit sequence (lib.rs)
+`optimize::cancel_and_wait()` → `alerts::donate::shutdown()` → lock Studio → `EXITING = true` → `Studio::shutdown()`
+(saves, stops outputs, then `clear_scene_data()` removes every source and waits for the destroy queue — Browser
+Sources must be gone before CEF stops, otherwise CEF aborts with 0x80000003) → `obs::runtime::shutdown()`
+while still holding the lock. The stats thread and control API requests check `EXITING` after taking the lock and
+never call libobs once it is set.

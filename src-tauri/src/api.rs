@@ -3,6 +3,10 @@
 //! - `/`              control API compatible with a subset of obs-websocket v5, so
 //!                    Stream Deck, Touch Portal, Streamer.bot, SAMMI… work unchanged.
 //! - `/audio/<name>`  Audio Bridge endpoint (see bridge.rs, docs/audio-bridge.md).
+//! - `/audio-source/<name>`  audio into "Plugin Audio" sources (see plugin_audio.rs).
+//! - `/plugin?id=&token=`    control API for JavaScript plugins, limited to their approved
+//!                    permissions (see jsplugins.rs); `/plugins/<id>/...` serves their files.
+//!                    Both are loopback-only.
 //!
 //! Binds 127.0.0.1 unless LAN access is enabled; password is always required
 //! when set (it is generated on first run).
@@ -130,6 +134,27 @@ pub fn configure(cfg: &ApiSettings) {
     *server = Some(Server { stop, thread: Some(thread), addr: wanted });
 }
 
+/// True while the API listener is running (plugins depend on it).
+pub fn is_listening() -> bool {
+    CTX.get().is_some_and(|c| c.server.lock().unwrap().is_some())
+}
+
+fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').find_map(|kv| kv.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
+}
+
+/// Audio endpoints accept the API password or a plugin token with the "audio" permission.
+fn audio_authorized(query: &str, loopback: bool) -> bool {
+    let pw = password();
+    if pw.is_empty() || query_param(query, "password") == Some(pw.as_str()) {
+        return true;
+    }
+    let plugin = (query_param(query, "plugin"), query_param(query, "token"));
+    loopback
+        && matches!(plugin, (Some(id), Some(token))
+            if crate::jsplugins::authorize(id, token).is_some_and(|p| p.iter().any(|p| p == "audio")))
+}
+
 fn password() -> String {
     CTX.get().map(|c| c.password.lock().unwrap().clone()).unwrap_or_default()
 }
@@ -137,26 +162,110 @@ fn password() -> String {
 const OVERLAY_HTML: &str = include_str!("chat/overlay.html");
 
 /// Plain HTTP GET (not a WebSocket upgrade): serves the chat overlay page.
-fn serve_http(mut stream: TcpStream, head: &str) {
-    use std::io::Write;
+const ALERTS_HTML: &str = include_str!("alerts/overlay.html");
+const WIDGETS_HTML: &str = include_str!("alerts/widgets.html");
+
+/// Alert styles for the overlay (read from the live settings).
+fn alerts_config() -> Option<String> {
+    let ctx = CTX.get()?;
+    let s = ctx.studio.lock().ok()?;
+    if crate::EXITING.load(Ordering::SeqCst) {
+        return None;
+    }
+    serde_json::to_string(&s.settings.alerts).ok()
+}
+
+fn serve_http(mut stream: TcpStream, head: &str, loopback: bool) {
+    use std::io::{Read, Write};
+    // Consume the request headers (they were only peeked).
+    let mut consumed = [0u8; 2048];
+    let _ = stream.read(&mut consumed[..head.len().min(2048)]);
     let path = head.split_whitespace().nth(1).unwrap_or("/");
     let route = path.split('?').next().unwrap_or("/");
-    let (status, body) = if route == "/overlay/chat" { ("200 OK", OVERLAY_HTML) } else { ("404 Not Found", "Not found") };
-    let resp = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+    let html = "text/html; charset=utf-8";
+    let (status, ctype, body): (&str, &str, Vec<u8>) = match route {
+        "/overlay/chat" => ("200 OK", html, OVERLAY_HTML.as_bytes().to_vec()),
+        "/overlay/alerts" => ("200 OK", html, ALERTS_HTML.as_bytes().to_vec()),
+        "/overlay/widgets" => ("200 OK", html, WIDGETS_HTML.as_bytes().to_vec()),
+        "/alerts/config" => match alerts_config() {
+            Some(json) => ("200 OK", "application/json", json.into_bytes()),
+            None => ("503 Service Unavailable", "text/plain", b"unavailable".to_vec()),
+        },
+        r if r.starts_with("/plugins/") && loopback => {
+            let file = r["/plugins/".len()..]
+                .split_once('/')
+                .and_then(|(id, rel)| crate::jsplugins::read_file(id, &percent_decode(rel)));
+            match file {
+                Some((bytes, mime)) => ("200 OK", mime, bytes),
+                None => ("404 Not Found", "text/plain", b"Not found".to_vec()),
+            }
+        }
+        r => match r.strip_prefix("/alerts/media/").and_then(crate::alerts::read_media) {
+            Some((bytes, mime)) => ("200 OK", mime, bytes),
+            None => ("404 Not Found", "text/plain", b"Not found".to_vec()),
+        },
+    };
+    let header = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len()
     );
-    let _ = stream.write_all(resp.as_bytes());
+    let _ = stream.write_all(header.as_bytes());
+    let _ = stream.write_all(&body);
+    // Close gracefully: an unread request left in the socket makes Windows reset the
+    // connection, which can cut off the end of the response.
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let mut sink = [0u8; 1024];
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    while matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
+}
+
+/// Alert Box overlay stream: {"type": "alert" | "config" | "skip", ...}.
+fn alerts_session(mut ws: WebSocket<TcpStream>) {
+    let (tx, rx) = mpsc::channel::<String>();
+    crate::alerts::subscribe(tx);
+    let _ = ws.get_ref().set_read_timeout(Some(Duration::from_millis(200)));
+    loop {
+        while let Ok(msg) = rx.try_recv() {
+            if ws.send(Message::text(msg)).is_err() {
+                return;
+            }
+        }
+        match ws.read() {
+            Ok(Message::Close(_)) => return,
+            Ok(_) => {}
+            Err(e) if is_timeout(&e) => {}
+            Err(_) => return,
+        }
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn handle_connection(stream: TcpStream) {
+    let loopback = stream.peer_addr().is_ok_and(|a| a.ip().is_loopback());
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut buf = [0u8; 2048];
     let n = stream.peek(&mut buf).unwrap_or(0);
     let head = String::from_utf8_lossy(&buf[..n]).to_string();
     if !head.to_ascii_lowercase().contains("upgrade: websocket") {
-        serve_http(stream, &head);
+        serve_http(stream, &head, loopback);
         return;
     }
     let _ = stream.set_read_timeout(None);
@@ -168,11 +277,24 @@ fn handle_connection(stream: TcpStream) {
     let Ok(ws) = ws else { return };
     let (route, query) = path.split_once('?').unwrap_or((&path, ""));
     if let Some(name) = route.strip_prefix("/audio/") {
-        audio_session(ws, name.to_string(), query);
+        audio_session(ws, name.to_string(), query, loopback);
+    } else if let Some(name) = route.strip_prefix("/audio-source/") {
+        audio_source_session(ws, name.to_string(), query, loopback);
+    } else if route == "/plugin" {
+        let id = query_param(query, "id").unwrap_or("").to_string();
+        match crate::jsplugins::authorize(&id, query_param(query, "token").unwrap_or("")).filter(|_| loopback) {
+            Some(perms) => control_session(ws, Some(PluginAuth { id, perms })),
+            None => {
+                let mut ws = ws;
+                let _ = ws.close(Some(close_frame(4009, "Authentication failed")));
+            }
+        }
     } else if route == "/chat" {
         chat_session(ws);
+    } else if route == "/alerts" {
+        alerts_session(ws);
     } else {
-        control_session(ws);
+        control_session(ws, None);
     }
 }
 
@@ -209,10 +331,31 @@ fn chat_session(mut ws: WebSocket<TcpStream>) {
 // ---------------------------------------------------------------------------
 // Audio Bridge session
 
-fn audio_session(mut ws: WebSocket<TcpStream>, name: String, query: &str) {
-    let pw = password();
-    let given = query.split('&').find_map(|kv| kv.strip_prefix("password=")).unwrap_or("");
-    if !pw.is_empty() && given != pw {
+/// Audio pushed into Plugin Audio sources: binary 48 kHz stereo interleaved f32le blocks.
+fn audio_source_session(mut ws: WebSocket<TcpStream>, name: String, query: &str, loopback: bool) {
+    if !audio_authorized(query, loopback) {
+        let _ = ws.close(Some(close_frame(4009, "Authentication failed")));
+        return;
+    }
+    let hello = json!({
+        "type": "hello", "channel": name, "sample_rate": bridge::SAMPLE_RATE,
+        "channels": bridge::CHANNELS, "format": "f32le", "layout": "interleaved",
+    });
+    let _ = ws.send(Message::text(hello.to_string()));
+    let mut clock = crate::plugin_audio::Clock::new();
+    loop {
+        match ws.read() {
+            Ok(Message::Binary(b)) => {
+                crate::plugin_audio::push(&name, &b, &mut clock);
+            }
+            Ok(Message::Close(_)) | Err(_) => return,
+            Ok(_) => {}
+        }
+    }
+}
+
+fn audio_session(mut ws: WebSocket<TcpStream>, name: String, query: &str, loopback: bool) {
+    if !audio_authorized(query, loopback) {
         let _ = ws.close(Some(close_frame(4009, "Authentication failed")));
         return;
     }
@@ -261,9 +404,63 @@ fn sha256_b64(s: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(Sha256::digest(s.as_bytes()))
 }
 
-fn control_session(mut ws: WebSocket<TcpStream>) {
+/// A JavaScript plugin connected through `/plugin` (already authenticated by its token).
+struct PluginAuth {
+    id: String,
+    perms: Vec<String>,
+}
+
+impl PluginAuth {
+    fn has(&self, p: &str) -> bool {
+        self.perms.iter().any(|x| x == p)
+    }
+
+    /// Event categories the plugin may receive.
+    fn event_mask(&self) -> u32 {
+        let mut mask = SUB_GENERAL;
+        for (perm, sub) in [("scenes", SUB_SCENES), ("inputs", SUB_INPUTS), ("outputs", SUB_OUTPUTS)] {
+            if self.has(perm) {
+                mask |= sub;
+            }
+        }
+        mask
+    }
+
+    /// Plugin-only requests and permission checks. Some(response) = handled here.
+    fn intercept(&self, d: &Value) -> Option<Value> {
+        let ty = d["requestType"].as_str().unwrap_or("");
+        let data = &d["requestData"];
+        let mut out = json!({ "requestType": ty, "requestId": d["requestId"], "requestStatus": { "result": true, "code": 100 } });
+        match ty {
+            "PluginLog" => {
+                crate::jsplugins::log(&self.id, data["level"].as_str().unwrap_or("info"), data["text"].as_str().unwrap_or(""));
+            }
+            "PluginSetWindowVisible" => {
+                let (id, visible) = (self.id.clone(), data["visible"].as_bool().unwrap_or(true));
+                // Window calls go through the UI thread: never block this socket on them.
+                std::thread::spawn(move || {
+                    let _ = crate::jsplugins::show(&id, visible);
+                });
+            }
+            "PluginInfo" => out["responseData"] = json!({ "id": self.id, "permissions": self.perms }),
+            _ => match crate::jsplugins::permission_for(ty) {
+                Some(p) if !self.has(p) => {
+                    out["requestStatus"] = json!({
+                        "result": false, "code": 403,
+                        "comment": format!("This plugin has no '{p}' permission (add it to manifest.json and enable the plugin again)"),
+                    });
+                }
+                _ => return None,
+            },
+        }
+        Some(out)
+    }
+}
+
+fn control_session(mut ws: WebSocket<TcpStream>, plugin: Option<PluginAuth>) {
     let Some(ctx) = CTX.get() else { return };
-    let pw = password();
+    // Plugins already authenticated with their token in the URL.
+    let pw = if plugin.is_some() { String::new() } else { password() };
     let (salt, challenge) = (random_token(24), random_token(24));
     let mut hello = json!({ "obsWebSocketVersion": "5.5.0", "rpcVersion": 1 });
     if !pw.is_empty() {
@@ -303,22 +500,26 @@ fn control_session(mut ws: WebSocket<TcpStream>) {
                         return;
                     }
                 }
-                subs.store(d["eventSubscriptions"].as_u64().map_or(SUB_ALL & !(1 << 16), |v| v as u32), Ordering::Relaxed);
+                let mask = plugin.as_ref().map_or(u32::MAX, PluginAuth::event_mask);
+                subs.store(d["eventSubscriptions"].as_u64().map_or(SUB_ALL & !(1 << 16), |v| v as u32) & mask, Ordering::Relaxed);
                 identified.store(true, Ordering::Relaxed);
                 json!({ "op": 2, "d": { "negotiatedRpcVersion": 1 } })
             }
             Some(3) if identified.load(Ordering::Relaxed) => {
                 if let Some(v) = d["eventSubscriptions"].as_u64() {
-                    subs.store(v as u32, Ordering::Relaxed);
+                    subs.store(v as u32 & plugin.as_ref().map_or(u32::MAX, PluginAuth::event_mask), Ordering::Relaxed);
                 }
                 json!({ "op": 2, "d": { "negotiatedRpcVersion": 1 } })
             }
-            Some(6) if identified.load(Ordering::Relaxed) => json!({ "op": 7, "d": run_request(&ctx.studio, d) }),
+            Some(6) if identified.load(Ordering::Relaxed) => {
+                let res = plugin.as_ref().and_then(|p| p.intercept(d)).unwrap_or_else(|| run_request(&ctx.studio, d));
+                json!({ "op": 7, "d": res })
+            }
             Some(8) if identified.load(Ordering::Relaxed) => {
                 let halt = d["haltOnFailure"].as_bool().unwrap_or(false);
                 let mut results = Vec::new();
                 for r in d["requests"].as_array().into_iter().flatten() {
-                    let res = run_request(&ctx.studio, r);
+                    let res = plugin.as_ref().and_then(|p| p.intercept(r)).unwrap_or_else(|| run_request(&ctx.studio, r));
                     let failed = res["requestStatus"]["result"] == false;
                     results.push(res);
                     if failed && halt {
@@ -430,6 +631,7 @@ fn run_request(studio: &Arc<Mutex<Studio>>, d: &Value) -> Value {
     let ty = d["requestType"].as_str().unwrap_or("").to_string();
     let data = d.get("requestData").cloned().unwrap_or(json!({}));
     let result = match studio.lock() {
+        Ok(_) if crate::EXITING.load(Ordering::SeqCst) => Err((702, "Shutting down".into())),
         Ok(mut s) => request(&mut s, &ty, &data),
         Err(_) => Err((702, "Studio unavailable".into())),
     };

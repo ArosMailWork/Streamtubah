@@ -25,3 +25,6 @@ dist-ssr
 
 # OBS runtime download cache
 obs-build
+
+# Packaged releases (scripts/package.sh)
+release

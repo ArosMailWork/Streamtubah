@@ -1,7 +1,7 @@
 // Bottom dock panels: scenes, sources, mixer.
 import { useEffect, useRef, useState } from "react";
-import { api, AudioAdvanced, AudioInfo, ItemInfo, StudioState, TransformAction } from "../api";
-import { act, levelsStore } from "../store";
+import { api, AudioAdvanced, AudioInfo, ItemInfo, ShowIn, StudioState, TransformAction } from "../api";
+import { act, levelsStore, toast } from "../store";
 import { AddSourceDialog, FiltersDialog, PropertiesDialog } from "./Dialogs";
 import { Modal, PromptDialog } from "./Modal";
 import { VoiceDialog } from "./VoiceDialog";
@@ -9,6 +9,12 @@ import { NamedSetOps, NamedSetPicker } from "./NamedSets";
 import { ContextMenu, MenuEntry } from "./ContextMenu";
 import { EditTransformDialog, ItemTransitionDialog } from "./TransformDialogs";
 import { useDockHandle } from "../layout/dock";
+
+const SHOW_IN: [ShowIn, string][] = [
+  ["both", "Stream and recording"],
+  ["stream", "Stream only (not recorded)"],
+  ["record", "Recording only (not on stream)"],
+];
 
 export function Panel(props: { title: string; actions?: React.ReactNode; children: React.ReactNode; className?: string }) {
   // The header is the drag handle for docking; ✕ removes the panel from the layout.
@@ -157,6 +163,10 @@ export function SourcesPanel({ state }: { state: StudioState }) {
         { label: "Copy", onClick: () => copy(it) },
         { label: "Duplicate", onClick: () => act(() => api.itemPaste(scene, it.id, true)) },
         ...pasteEntries,
+        ...(it.video ? [{ label: "Show in", submenu: SHOW_IN.map(([mode, label]) => ({
+          label: `${it.show_in === mode ? "✓ " : ""}${label}`,
+          onClick: () => act(async () => { const note = await api.sourceSetShowIn(it.name, mode); if (note) toast(note); }),
+        })) } as MenuEntry] : []),
         { label: "Copy Filters", onClick: () => { copiedFilters = it.name; } },
         {
           label: copiedFilters ? `Paste Filters from "${copiedFilters}"` : "Paste Filters",
@@ -266,6 +276,11 @@ export function SourcesPanel({ state }: { state: StudioState }) {
                   onClick={(e) => { e.stopPropagation(); toggleCollapsed(it.id); }}>{collapsed.has(it.id) ? "▸" : "▾"}</button>
               )}
               <span className="grow" title={it.type_name}>{it.group ? "📁 " : ""}{it.name}</span>
+              {it.show_in !== "both" && (
+                <span className="badge" title={it.show_in === "stream" ? "Stream only: not in recordings / replay buffer" : "Recording only: not on stream, preview or virtual camera"}>
+                  {it.show_in === "stream" ? "📡 only" : "⏺ only"}
+                </span>
+              )}
               <button className={`icon small ${it.locked ? "on" : ""}`} title={it.locked ? "Unlock" : "Lock"}
                 onClick={(e) => { e.stopPropagation(); act(() => api.itemSetLocked(it.id, !it.locked)); }}>{it.locked ? "🔒" : "🔓"}</button>
               <button className={`icon small ${it.visible ? "" : "off"}`} title={it.visible ? "Hide" : "Show"}

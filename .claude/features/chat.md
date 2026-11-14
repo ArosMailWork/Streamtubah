@@ -36,3 +36,7 @@
 ## Not yet
 Login/send/moderation code is complete but untested until developer client IDs exist (docs/platform-apps.md).
 Follow/raid/sub alerts, TikTok, Facebook, donations.
+
+## Alerts
+Parsers attach a structured `alert` (serde-skipped) for subs/gifts/bits/raids (Twitch), subs/gifts/hosts (Kick) and
+Super Chats/members/gifts (YouTube); `publish` forwards it to `alerts::emit`. See alerts.md.

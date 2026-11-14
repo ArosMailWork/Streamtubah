@@ -207,11 +207,13 @@ impl Default for ApiSettings {
 pub struct PluginSettings {
     /// Also load plugins installed for OBS Studio (%ProgramData%/obs-studio/plugins).
     pub load_obs_studio_plugins: bool,
+    /// Enabled JavaScript plugins → the permissions the user approved (see jsplugins.rs).
+    pub js: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for PluginSettings {
     fn default() -> Self {
-        Self { load_obs_studio_plugins: true }
+        Self { load_obs_studio_plugins: true, js: Default::default() }
     }
 }
 
@@ -255,6 +257,27 @@ pub struct ChatSettings {
     pub youtube: String,
 }
 
+/// Interface options applied when the app starts.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct UiSettings {
+    /// Render the interface without the GPU (saves ~70 MB RAM, slightly less smooth animations).
+    pub low_memory: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Look for a new version on GitHub Releases at startup.
+    pub auto_check: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self { auto_check: true }
+    }
+}
+
 /// Auto-Optimize preference and the PC it last ran on.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -293,6 +316,10 @@ pub struct AppSettings {
     /// Action id -> accelerator ("Ctrl+Shift+F1"). See `hotkeys::ACTIONS`.
     pub hotkeys: BTreeMap<String, String>,
     pub optimize: OptimizeSettings,
+    pub updates: UpdateSettings,
+    pub ui: UiSettings,
+    pub alerts: crate::alerts::AlertSettings,
+    pub donate: crate::alerts::donate::DonateSettings,
     pub transition: TransitionSettings,
     pub audio: AudioSettings,
     pub api: ApiSettings,
@@ -311,6 +338,10 @@ impl Default for AppSettings {
             profile: "Default".into(),
             hotkeys: BTreeMap::new(),
             optimize: Default::default(),
+            updates: Default::default(),
+            ui: Default::default(),
+            alerts: Default::default(),
+            donate: Default::default(),
             transition: Default::default(),
             audio: Default::default(),
             api: Default::default(),
@@ -327,9 +358,11 @@ impl AppSettings {
     }
 
     pub fn load(path: &Path) -> Self {
-        let s: Self =
-            std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-        s
+        // Editors such as Notepad may add a UTF-8 BOM, which serde_json rejects.
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str(s.trim_start_matches('\u{feff}')).ok())
+            .unwrap_or_default()
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
@@ -418,5 +451,17 @@ impl AppSettings {
         s.platform_apps.kick_client_secret = crate::vault::get(KICK_SECRET).unwrap_or(defaults.kick_client_secret);
         s.api.password = crate::vault::get(API_PASSWORD).unwrap_or_default();
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn loads_settings_with_bom() {
+        let p = std::env::temp_dir().join(format!("stb-bom-{}.json", std::process::id()));
+        std::fs::write(&p, "\u{feff}{\"ui\": {\"low_memory\": true}, \"profile\": \"Mine\"}").unwrap();
+        let s = super::AppSettings::load(&p);
+        let _ = std::fs::remove_file(&p);
+        assert!(s.ui.low_memory && s.profile == "Mine");
     }
 }

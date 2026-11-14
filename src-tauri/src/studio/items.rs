@@ -178,7 +178,12 @@ impl Studio {
             return Ok(());
         }
         let (src, dst) = (self.find_source(from)?, self.find_source(to)?);
+        // "Show in" belongs to the source, not to its filter chain: keep the target's own.
+        let keep = crate::split::show_in(&dst);
         unsafe { sys::obs_source_copy_filters(dst.as_ptr(), src.as_ptr()) };
+        if dst.output_flags() & sys::OBS_SOURCE_VIDEO != 0 {
+            crate::split::set_show_in(&dst, keep)?;
+        }
         self.touch();
         Ok(())
     }

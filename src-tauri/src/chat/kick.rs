@@ -2,6 +2,7 @@
 //! Kick rotates the Pusher app key without notice, so the key is negotiated
 //! before every connection, with the last known key as fallback.
 
+use crate::alerts::AlertEvent;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Value, json};
@@ -47,11 +48,10 @@ pub fn run(target: &str, stop: &AtomicBool) -> Result<(), String> {
                     publish(m);
                 }
             }
-            e if e.ends_with("SubscriptionEvent") || e.ends_with("GiftedSubscriptionsEvent") => {
-                let who = data["username"].as_str().or(data["gifter_username"].as_str()).unwrap_or("Someone");
-                let mut m = ChatMessage::new("kick", who, if e.contains("Gifted") { "gifted subscriptions" } else { "subscribed" });
-                m.kind = "membership";
-                publish(m);
+            e if e.ends_with("SubscriptionEvent") || e.ends_with("GiftedSubscriptionsEvent") || e.ends_with("StreamHostEvent") => {
+                if let Some(m) = event_message(e, &data) {
+                    publish(m);
+                }
             }
             _ => {}
         }
@@ -144,5 +144,51 @@ fn find_str(v: &Value, key: &str) -> Option<String> {
             .or_else(|| o.values().find_map(|x| find_str(x, key))),
         Value::Array(a) => a.iter().find_map(|x| find_str(x, key)),
         _ => None,
+    }
+}
+
+/// Chat line + alert for subscription, gift and host (raid) events.
+fn event_message(event: &str, d: &Value) -> Option<ChatMessage> {
+    let s = |k: &str| d[k].as_str().filter(|v| !v.is_empty());
+    let (who, text, mut alert) = if event.ends_with("GiftedSubscriptionsEvent") {
+        let who = s("gifter_username").unwrap_or("Someone");
+        let n = d["gifted_usernames"].as_array().map_or(1, |a| a.len().max(1)) as u64;
+        let mut a = AlertEvent::new("gift", "kick", who);
+        a.count = Some(n);
+        (who, format!("gifted {n} subscription{}", if n == 1 { "" } else { "s" }), a)
+    } else if event.ends_with("StreamHostEvent") {
+        let who = s("host_username")?;
+        let n = d["number_viewers"].as_u64().unwrap_or(0);
+        let mut a = AlertEvent::new("raid", "kick", who);
+        a.count = Some(n);
+        (who, format!("is hosting with {n} viewers"), a)
+    } else {
+        let who = s("username").unwrap_or("Someone");
+        let mut a = AlertEvent::new("sub", "kick", who);
+        a.count = d["months"].as_u64();
+        (who, "subscribed".to_string(), a)
+    };
+    if let Some(id) = d["id"].as_str() {
+        alert.id = format!("kick-{id}");
+    }
+    let mut m = ChatMessage::new("kick", who, text);
+    m.kind = "membership";
+    m.alert = Some(alert);
+    Some(m)
+}
+
+#[cfg(test)]
+mod alert_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn kick_alerts() {
+        let g = event_message("App\\Events\\GiftedSubscriptionsEvent", &json!({ "gifter_username": "Gifty", "gifted_usernames": ["a", "b", "c"] })).unwrap();
+        assert_eq!(g.alert.map(|a| (a.kind, a.name, a.count)), Some(("gift".into(), "Gifty".into(), Some(3))));
+        let h = event_message("App\\Events\\StreamHostEvent", &json!({ "host_username": "Hoster", "number_viewers": 12 })).unwrap();
+        assert_eq!(h.alert.map(|a| (a.kind, a.count)), Some(("raid".into(), Some(12))));
+        let sub = event_message("App\\Events\\SubscriptionEvent", &json!({ "username": "Subby", "months": 3 })).unwrap();
+        assert_eq!(sub.alert.map(|a| (a.kind, a.count)), Some(("sub".into(), Some(3))));
     }
 }

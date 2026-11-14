@@ -2,6 +2,7 @@
 //! (`youtubei/v1/live_chat/get_live_chat`). No API key or login, but it is
 //! unofficial: YouTube may change the schema at any time.
 
+use crate::alerts::AlertEvent;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -184,6 +185,7 @@ fn parse_item(item: &Value) -> Option<ChatMessage> {
         .as_array()
         .map(|b| b.iter().filter_map(|x| x["liveChatAuthorBadgeRenderer"]["tooltip"].as_str().map(String::from)).collect())
         .unwrap_or_default();
+    m.alert = youtube_alert(renderer, &m, &r);
     Some(m)
 }
 
@@ -207,5 +209,66 @@ mod tests {
     fn extracts_embedded_json() {
         let page = r#"<script>var ytInitialData = {"a":{"b":1}};</script>"#;
         assert_eq!(embedded_json(page, "ytInitialData").unwrap()["a"]["b"], 1);
+    }
+}
+
+/// Alert for Super Chats/Stickers, new members and gifted memberships.
+fn youtube_alert(renderer: &str, m: &ChatMessage, r: &Value) -> Option<AlertEvent> {
+    let mut a = match renderer {
+        "liveChatPaidMessageRenderer" | "liveChatPaidStickerRenderer" => {
+            let mut a = AlertEvent::new("superchat", "youtube", m.author.clone());
+            a.amount_text = m.amount.clone();
+            a.amount = m.amount.as_deref().and_then(parse_money);
+            a.message = m.text.clone();
+            a
+        }
+        "liveChatMembershipItemRenderer" => {
+            let mut a = AlertEvent::new("member", "youtube", m.author.clone());
+            a.message = runs_text(&r["message"]);
+            a
+        }
+        "liveChatSponsorshipsGiftPurchaseAnnouncementRenderer" => {
+            let mut a = AlertEvent::new("gift", "youtube", m.author.clone());
+            // "Sent 5 Name memberships" -> 5
+            a.count = m.text.split_whitespace().find_map(|w| w.parse::<u64>().ok()).or(Some(1));
+            a
+        }
+        _ => return None,
+    };
+    if let Some(id) = &m.msg_id {
+        a.id = format!("youtube-{id}");
+    }
+    Some(a)
+}
+
+/// "$5.00" / "₫50,000" / "€1,234.50" -> number (thousands separators removed).
+fn parse_money(s: &str) -> Option<f64> {
+    let digits: String = s.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == ',').collect();
+    let (int, frac) = match digits.rfind(['.', ',']) {
+        Some(i) if digits.len() - i - 1 == 2 => (&digits[..i], &digits[i + 1..]),
+        _ => (digits.as_str(), ""),
+    };
+    let int: String = int.chars().filter(|c| c.is_ascii_digit()).collect();
+    format!("{int}.{}", if frac.is_empty() { "0" } else { frac }).parse().ok()
+}
+
+#[cfg(test)]
+mod alert_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn youtube_alerts() {
+        let sc = parse_item(&json!({ "liveChatPaidMessageRenderer": {
+            "id": "p1", "authorName": { "simpleText": "Dee" }, "purchaseAmountText": { "simpleText": "₫50,000" },
+            "message": { "runs": [{ "text": "hello" }] } } })).unwrap();
+        let a = sc.alert.unwrap();
+        assert_eq!((a.kind.as_str(), a.amount, a.id.as_str()), ("superchat", Some(50000.0), "youtube-p1"));
+        assert_eq!(parse_money("$5.00"), Some(5.0));
+        assert_eq!(parse_money("€1,234.50"), Some(1234.5));
+        let gift = parse_item(&json!({ "liveChatSponsorshipsGiftPurchaseAnnouncementRenderer": { "id": "g1",
+            "header": { "liveChatSponsorshipsHeaderRenderer": { "authorName": { "simpleText": "Gia" },
+              "primaryText": { "runs": [{ "text": "Sent " }, { "text": "5" }, { "text": " Chan memberships" }] } } } } })).unwrap();
+        assert_eq!(gift.alert.map(|a| (a.kind, a.name, a.count)), Some(("gift".into(), "Gia".into(), Some(5))));
     }
 }

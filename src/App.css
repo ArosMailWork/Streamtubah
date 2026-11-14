@@ -432,3 +432,21 @@ html.popout-root, html.popout-root body, html.popout-root #root { background: tr
 .secret-row input { min-width: 0; font-family: ui-monospace, monospace; }
 .secret-status { flex: 1; color: var(--muted); font-family: ui-monospace, monospace; }
 .secret-status.set { color: #31c3a2; }
+
+/* Updates */
+.update-btn { background: rgba(49, 195, 162, .15); border-color: #1f5e48; color: #31c3a2; }
+.update-notes { white-space: pre-wrap; padding: 8px 10px; background: var(--panel-2); border-radius: var(--radius); max-height: 240px; overflow-y: auto; }
+
+/* Alerts & donations */
+.alerts-tab { display: flex; flex-direction: column; gap: 10px; }
+.alerts-tab .row, .alert-style .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.alerts-tab .url { font-size: 12px; padding: 4px 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alerts-editor { display: grid; grid-template-columns: 220px 1fr; gap: 12px; }
+.alerts-kinds .list-row button { padding: 2px 8px; }
+.alert-style { display: flex; flex-direction: column; gap: 8px; }
+.alert-style input[type="color"] { width: 36px; height: 24px; padding: 0; border: none; background: none; vertical-align: middle; }
+.alerts-recent { max-height: 180px; overflow-y: auto; }
+.steps { margin: 4px 0; padding-left: 18px; line-height: 1.6; }
+
+.plugin-log { max-height: 60vh; overflow: auto; font-size: 11px; white-space: pre-wrap; background: var(--bg, #111); padding: 8px; border-radius: 6px; }
+.js-plugin .prop-check { align-items: flex-start; }

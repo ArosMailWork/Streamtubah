@@ -22,7 +22,28 @@
 - Audio tracks: one AAC encoder per track (`aac_enc[0..6]`, mixer index = track). Record and replay buffer write
   `output.record_tracks` (bit mask, FLV keeps the first); the stream sends `output.stream_track`. Verified: a 2-track
   MKV has `audio_track1` + `audio_track2`.
-- Signals -> `obs:output` event `{output, signal, code?, error?, path?}`.
+- Signals -> `obs:output` event `{output, signal, code?, error?, path?}`. The UI refreshes on each signal and also
+  when `obs:stats.outputs` (every second) differs from the shown state (`src/store.ts`): on `stop` the output can
+  still report active, which used to leave the button on "Stop Rec".
+
+## Stream-only / recording-only sources
+- `src-tauri/src/split.rs`; UI: Sources context menu → "Show in" (video sources), badge "📡 only" / "⏺ only".
+- Per **source** (not per item): a hidden video filter `streamtubah_output_gate` (settings `mode` = stream|record,
+  first in the chain, `CAP_DISABLED` so it is not in "add filter", skipped by `filters()` / voice bypass, kept by
+  "Paste Filters"). Saved with the collection like any filter. "both" removes it.
+- Record canvas: `RecordView` = `obs_view` + `obs_view_add2` (canvas video info) whose only source is the private
+  `streamtubah_record_program`; it renders output channel 0 (transition = program, so transitions are recorded) with a
+  graphics-thread flag set. The gate draws (`obs_source_skip_video_filter`) or skips depending on that flag.
+  Main mix (preview, program, stream, multistream, virtual camera) = stream version.
+- `Outputs::record_video_encoder`: when record + replay are idle and `split::any_split()`, creates the view and its own
+  video encoder `record_video` (same type/settings as main); recording and replay buffer share it. Otherwise they share
+  `main_video`. `release_idle_record_view` (stats tick, 1 s) frees both once record + replay stop. Field order: encoder
+  is dropped before the view.
+- Changing "Show in" while a recording runs on the shared canvas returns a note (toast): applies to the next recording.
+  While the record canvas is running, changes apply live. Audio is not split.
+- Verified 2026-11-14 (NVENC, 1920x1080 → 1280x720): local RTMP receiver got the stream-only box and not the
+  recording-only one; the MKV the opposite; replay buffer like the MKV; settings survived a collection reload; with
+  every source on "both" the recording showed both boxes and no record canvas was created.
 
 ## Multistream
 - `src-tauri/src/studio/outputs/multistream.rs`, settings `stream.main_enabled` + `stream.targets: Vec<StreamTarget>`

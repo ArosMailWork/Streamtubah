@@ -296,6 +296,7 @@ fn run_trial(studio: &Arc<Mutex<Studio>>, base: &VideoConfig, cand: (u32, u32, u
     }
     let path = std::env::temp_dir().join("streamtubah-encode-test.mkv");
     let result = (|| -> Result<Trial, String> {
+        cancelled()?;
         let (vid, vname) = (cstr(encoder_id), cstr("optimize_test_video"));
         let venc = Encoder::from_raw(unsafe {
             sys::obs_video_encoder_create(vid.as_ptr(), vname.as_ptr(), Data::from_json(enc_settings).as_ptr(), std::ptr::null_mut())
@@ -318,18 +319,21 @@ fn run_trial(studio: &Arc<Mutex<Studio>>, base: &VideoConfig, cand: (u32, u32, u
                 return Err(out.last_error().unwrap_or_else(|| "The encoder could not start at this setting".into()));
             }
         }
-        std::thread::sleep(Duration::from_secs(1));
+        // On cancel the output is still stopped and released before returning.
+        let waited = sleep_unless_cancelled(Duration::from_secs(1));
         let a = video_counters();
-        std::thread::sleep(TRIAL);
+        let waited = waited.and_then(|_| sleep_unless_cancelled(TRIAL));
         let b = video_counters();
         unsafe { sys::obs_output_force_stop(out.as_ptr()) };
         drop(out);
+        waited?;
         let pct = |d: u64, t: u64| if t == 0 { 100.0 } else { (d as f64 / t as f64 * 1000.0).round() / 10.0 };
         let skipped_pct = pct(b.0.saturating_sub(a.0), b.1.saturating_sub(a.1));
         let lagged_pct = pct(b.2.saturating_sub(a.2), b.3.saturating_sub(a.3));
         Ok(Trial { width: w, height: h, fps, passed: skipped_pct <= MAX_DROP_PCT && lagged_pct <= MAX_DROP_PCT, skipped_pct, lagged_pct })
     })();
     let _ = std::fs::remove_file(&path);
+    cancelled()?;
     // An encoder that refuses a setting (e.g. a GPU without 1440p support) simply fails that step.
     Ok(result.unwrap_or_else(|e| {
         eprintln!("encode test {w}x{h}@{fps}: {e}");
@@ -337,11 +341,39 @@ fn run_trial(studio: &Arc<Mutex<Studio>>, base: &VideoConfig, cand: (u32, u32, u
     }))
 }
 
+/// Set while a run is in progress (two runs would change video settings under each other).
+static RUNNING: AtomicBool = AtomicBool::new(false);
+/// Set at app exit: a run stops at the next check and releases its libobs objects.
+static CANCEL: AtomicBool = AtomicBool::new(false);
+
+fn cancelled() -> Result<(), String> {
+    if CANCEL.load(Ordering::SeqCst) { Err("Auto-Optimize cancelled".into()) } else { Ok(()) }
+}
+
+/// Sleeps in small steps so a cancel request is noticed quickly.
+fn sleep_unless_cancelled(d: Duration) -> Result<(), String> {
+    let end = Instant::now() + d;
+    while Instant::now() < end {
+        cancelled()?;
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    cancelled()
+}
+
+/// Called before libobs shuts down: stops a running test and waits (max 10 s) until its
+/// encoders/outputs are released, so nothing touches libobs after obs_shutdown.
+pub fn cancel_and_wait() {
+    CANCEL.store(true, Ordering::SeqCst);
+    let end = Instant::now() + Duration::from_secs(10);
+    while RUNNING.load(Ordering::SeqCst) && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Full Auto-Optimize run. Emits `optimize:progress` {step} while testing; restores the
 /// current video settings afterwards (nothing is applied here).
 pub fn run(app: &AppHandle, studio: &Arc<Mutex<Studio>>, level: u8) -> Result<(Measurement, Recommendation), String> {
-    // Two runs at once would change the video settings under each other and skew the results.
-    static RUNNING: AtomicBool = AtomicBool::new(false);
+    cancelled()?;
     if RUNNING.swap(true, Ordering::SeqCst) {
         return Err("Auto-Optimize is already running".into());
     }
@@ -368,6 +400,7 @@ fn run_inner(app: &AppHandle, studio: &Arc<Mutex<Studio>>, level: u8) -> Result<
     progress("Measuring upload speed…".into());
     let base_cfg = base.to_config();
     let m = measure((base_cfg.base_width, base_cfg.base_height), service);
+    cancelled()?;
     let mut reasons = Vec::new();
     let (enc, bitrate, candidates) = plan(&m, level, &mut reasons);
     let enc = enc.ok_or("No video encoder found")?;
@@ -378,6 +411,8 @@ fn run_inner(app: &AppHandle, studio: &Arc<Mutex<Studio>>, level: u8) -> Result<
     for cand in &candidates {
         progress(format!("Testing {}p{} with {}…", cand.1, cand.2, enc.name));
         let t = run_trial(studio, &base_cfg, *cand, &enc.id, &enc_settings);
+        // After a cancel libobs is about to shut down: leave the video settings alone.
+        cancelled()?;
         let restore = runtime::reset_video(&base_cfg);
         let t = t?;
         restore?;
