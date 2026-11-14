@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Streamtubah chat overlay</title>
+<style>
+  /* Transparent background for Browser Source. Override with ?bg=%23000000aa&size=20&fade=30 */
+  html, body { margin: 0; background: transparent; overflow: hidden; height: 100%; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; color: #fff; display: flex; flex-direction: column; justify-content: flex-end; }
+  .msg { margin: 4px 8px; padding: 6px 10px; border-radius: 8px; background: var(--bg, rgba(0,0,0,.45));
+         text-shadow: 0 1px 2px #000; line-height: 1.35; word-wrap: break-word; animation: in .25s ease-out; transition: opacity .6s; }
+  .msg.paid { background: rgba(230, 140, 20, .75); }
+  .msg.membership { background: rgba(30, 160, 90, .7); }
+  .msg.system { background: rgba(90, 90, 120, .6); font-style: italic; }
+  .p { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .twitch { background: #9146ff; } .youtube { background: #ff0033; } .kick { background: #53fc18; }
+  .a { font-weight: 700; margin-right: 6px; }
+  .amt { font-weight: 700; margin-right: 6px; }
+  @keyframes in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+</style>
+</head>
+<body>
+<script>
+  const q = new URLSearchParams(location.search);
+  const fade = Number(q.get("fade") || 0);
+  const max = Number(q.get("max") || 30);
+  if (q.get("size")) document.body.style.fontSize = q.get("size") + "px";
+  if (q.get("bg")) document.body.style.setProperty("--bg", q.get("bg"));
+  const seen = new Set();
+  function add(m) {
+    if (seen.has(m.id)) return;
+    seen.add(m.id);
+    const d = document.createElement("div");
+    d.className = "msg " + m.kind;
+    const dot = document.createElement("span"); dot.className = "p " + m.platform;
+    const a = document.createElement("span"); a.className = "a"; a.textContent = m.author; if (m.color) a.style.color = m.color;
+    d.append(dot, a);
+    if (m.amount) { const s = document.createElement("span"); s.className = "amt"; s.textContent = m.amount; d.append(s); }
+    d.append(document.createTextNode(m.text));
+    document.body.append(d);
+    while (document.body.querySelectorAll(".msg").length > max) document.body.querySelector(".msg").remove();
+    if (fade > 0) setTimeout(() => { d.style.opacity = 0; setTimeout(() => d.remove(), 700); }, fade * 1000);
+  }
+  function connect() {
+    const ws = new WebSocket(`ws://${location.host}/chat`);
+    ws.onmessage = (e) => add(JSON.parse(e.data));
+    ws.onclose = () => setTimeout(connect, 2000);
+  }
+  connect();
+</script>
+</body>
+</html>
