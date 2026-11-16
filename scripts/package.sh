@@ -3,6 +3,9 @@
 #   Streamtubah-<v>-win64.zip   full portable folder (first install / OBS runtime changes)
 #   Streamtubah-<v>-app.zip     streamtubah.exe only (what the in-app updater installs)
 #   latest.json                 update manifest (version, sha256, Ed25519 signature)
+#   Streamtubah-cef-<obs>-win64.zip + cef-<obs>.json
+#                               browser component (CEF + obs-browser), downloaded by the app on first
+#                               use from the GitHub release `runtime-cef-<obs>` (see src-tauri/src/cef.rs)
 #
 # Usage: scripts/package.sh ["release notes"]
 # Needs: `bash scripts/setup-obs.sh release` done once, and the signing key
@@ -49,6 +52,21 @@ It includes the OBS Studio $OBS runtime (libobs, plug-ins, CEF), also under the 
 OBS Studio source code: https://github.com/obsproject/obs-studio/tree/$OBS
 EOF
 
+echo "== Splitting off the browser component (CEF)"
+CEF_STAGE="$OUT/cef/obs-browser"
+mkdir -p "$CEF_STAGE/bin/64bit" "$CEF_STAGE/data"
+P64="$STAGE/obs-plugins/64bit"
+for f in obs-browser.dll obs-browser-page.exe libcef.dll chrome_elf.dll icudtl.dat v8_context_snapshot.bin snapshot_blob.bin          libEGL.dll libGLESv2.dll vk_swiftshader.dll vk_swiftshader_icd.json vulkan-1.dll; do
+  [ -e "$P64/$f" ] && mv "$P64/$f" "$CEF_STAGE/bin/64bit/"
+done
+mv "$P64"/*.pak "$CEF_STAGE/bin/64bit/"
+mv "$P64/locales" "$CEF_STAGE/bin/64bit/"
+mv "$STAGE/data/obs-plugins/obs-browser/"* "$CEF_STAGE/data/"
+rmdir "$STAGE/data/obs-plugins/obs-browser"
+[ -f "$CEF_STAGE/bin/64bit/libcef.dll" ] || { echo "libcef.dll not found" >&2; exit 1; }
+CEF="Streamtubah-cef-$OBS-win64.zip"
+(cd "$OUT/cef" && "$WINTAR" -a -cf "../$CEF" obs-browser)
+
 FULL="Streamtubah-$VERSION-win64.zip"
 APP="Streamtubah-$VERSION-app.zip"
 echo "== Zipping"
@@ -57,6 +75,16 @@ echo "== Zipping"
 
 echo "== Signing"
 SIG=$(cd src-tauri && cargo run -q --example release_tool -- sign "$OUT/$APP")
+CEF_SIG=$(cd src-tauri && cargo run -q --example release_tool -- sign "$OUT/$CEF")
+CEF_SHA=$(sha256sum "$OUT/$CEF" | cut -d' ' -f1)
+python - "$OUT/cef-$OBS.json" <<EOF
+import json, sys
+json.dump({
+    "obs_runtime": "$OBS",
+    "url": "https://github.com/$REPO/releases/download/runtime-cef-$OBS/$CEF",
+    "sha256": "$CEF_SHA", "signature": "$CEF_SIG", "size": $(stat -c%s "$OUT/$CEF"),
+}, open(sys.argv[1], "w"), indent=2)
+EOF
 SHA_APP=$(sha256sum "$OUT/$APP" | cut -d' ' -f1)
 SHA_FULL=$(sha256sum "$OUT/$FULL" | cut -d' ' -f1)
 BASE="https://github.com/$REPO/releases/download/v$VERSION"
@@ -72,7 +100,9 @@ json.dump({
 EOF
 
 echo
-du -sh "$STAGE" "$OUT/$FULL" "$OUT/$APP"
+du -sh "$STAGE" "$OUT/$FULL" "$OUT/$APP" "$OUT/cef" "$OUT/$CEF"
 echo
+echo "Browser component (once per OBS runtime; skip if runtime-cef-$OBS already exists):"
+echo "  gh release create runtime-cef-$OBS \"release/$VERSION/$CEF\" \"release/$VERSION/cef-$OBS.json\" --title \"Browser component for OBS $OBS\" --notes \"Downloaded by Streamtubah on first use of a Browser Source.\" --latest=false"
 echo "Publish (installed copies look at the 'latest' release):"
 echo "  gh release create v$VERSION \"release/$VERSION/$FULL\" \"release/$VERSION/$APP\" \"release/$VERSION/latest.json\" --title \"Streamtubah $VERSION\" --notes \"$NOTES\""

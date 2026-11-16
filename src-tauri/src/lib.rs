@@ -6,6 +6,8 @@ mod bridge;
 mod split;
 mod jsplugins;
 mod plugin_audio;
+mod vtuber;
+mod cef;
 mod chat;
 mod commands;
 mod hotkeys;
@@ -51,6 +53,7 @@ fn boot(app: &AppHandle) -> Result<Arc<Mutex<Studio>>, Box<dyn std::error::Error
     }
 
     let mut plugin_roots = vec![plugins_dir(app)?];
+    plugin_roots.extend(cef::plugin_root(&data_dir, &bin_dir));
     if settings.plugins.load_obs_studio_plugins {
         if let Some(pd) = std::env::var_os("ProgramData") {
             plugin_roots.push(std::path::PathBuf::from(pd).join("obs-studio/plugins"));
@@ -68,6 +71,7 @@ fn boot(app: &AppHandle) -> Result<Arc<Mutex<Studio>>, Box<dyn std::error::Error
     bridge::register();
     split::register();
     plugin_audio::register();
+    vtuber::register();
     obs::runtime::load_modules();
     eprintln!("libobs {version} ready");
 
@@ -175,6 +179,7 @@ fn spawn_stats_timer(app: AppHandle, studio: Arc<Mutex<Studio>>) {
             let cpu_now = unsafe { obs::os_cpu_usage_info_query(cpu.0) };
             api::CPU_USAGE.store(cpu_now.to_bits(), Ordering::Relaxed);
             s.outputs.release_idle_record_view();
+            vtuber::tick();
             let stats = unsafe {
                 let video = obs::sys::obs_get_video();
                 json!({
@@ -240,6 +245,8 @@ pub fn run() {
             let (api_cfg, chat_cfg, hotkey_cfg, donate_cfg, js_plugins) = {
                 let s = studio.lock().unwrap();
                 let st = &s.settings;
+                vtuber::init(app.handle(), &app.path().app_data_dir()?, &st.vtuber);
+                cef::init(app.handle(), app.path().app_data_dir()?);
                 (st.with_secrets().api, st.chat.clone(), st.hotkeys.clone(), st.donate.clone(), st.plugins.js.clone())
             };
             let data_dir = app.path().app_data_dir()?;
@@ -367,6 +374,10 @@ pub fn run() {
             commands::js_plugin_show,
             commands::js_plugin_logs,
             commands::js_plugins_open_folder,
+            commands::vtuber_status,
+            commands::vtuber_import_cover,
+            commands::cef_status,
+            commands::cef_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -382,6 +393,7 @@ pub fn run() {
             let guard = state.as_ref().and_then(|s| s.0.lock().ok());
             EXITING.store(true, Ordering::SeqCst);
             if let Some(mut s) = guard {
+                vtuber::shutdown();
                 // Removes every source first so Browser Sources close their CEF browsers;
                 // CEF aborts the process (0x80000003) if it stops while a browser is alive.
                 s.shutdown();

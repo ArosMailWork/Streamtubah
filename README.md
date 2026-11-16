@@ -26,6 +26,9 @@ For release builds run `bash scripts/setup-obs.sh release` before `npm run tauri
 4. Publish the three files from `release/<version>/` with the `gh release create …` line the script prints.
    Installed copies read `latest.json` from the latest release, verify the Ed25519 signature and replace only
    `streamtubah.exe`. A release with a different OBS runtime asks users to download the full zip.
+5. Once per OBS runtime: publish `Streamtubah-cef-<obs>-win64.zip` + `cef-<obs>.json` as release
+   `runtime-cef-<obs>` (not marked latest). The portable zip has no Chromium; the app downloads this
+   browser component the first time a Browser Source is added.
 
 ## Architecture
 ```
@@ -40,6 +43,11 @@ React UI (WebView2) ──invoke/events──► Rust (src-tauri/src)
 - Every source/filter/encoder/service settings dialog is generated from libobs
   `obs_properties` — no per-plugin UI code.
 - Data lives in `%APPDATA%/com.streamtubah.app/` (`scenes.json`, `settings.json`, `obs.log`).
+
+## VTuber mode
+Settings → VTuber mode (or 🎭 in the top bar): webcam sources are always covered, and while an app outside the
+face-tracking allow list uses your camera you get a warning and Display Capture / that app's Window Capture are
+covered with your cover image. Other apps are never closed.
 
 ## Extending
 - **OBS plug-ins**: put them in `%APPDATA%/com.streamtubah.app/plugins` (Settings → Plugins → Open).

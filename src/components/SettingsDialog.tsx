@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CefStatusRow } from "./CefDialog";
 import { JsPluginsSection } from "./JsPlugins";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, AppSettings, AudioDevice, EncoderInfo, PluginsInfo, TypeInfo } from "../api";
@@ -13,8 +14,9 @@ import { SecretFields, useSecrets } from "./SecretField";
 import { AboutTab } from "./Updates";
 import { AlertsTab } from "./AlertsTab";
 import { DonationsTab } from "./DonationsTab";
+import { VtuberTab } from "./VtuberTab";
 
-export type SettingsTab = "optimize" | "stream" | "output" | "video" | "audio" | "transitions" | "hotkeys" | "alerts" | "donations" | "chat" | "accounts" | "plugins" | "api" | "about";
+export type SettingsTab = "optimize" | "stream" | "output" | "video" | "audio" | "transitions" | "hotkeys" | "alerts" | "donations" | "vtuber" | "chat" | "accounts" | "plugins" | "api" | "about";
 type Tab = SettingsTab;
 const TABS: { id: Tab; label: string }[] = [
   { id: "optimize", label: "Auto-Optimize" },
@@ -26,6 +28,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "hotkeys", label: "Hotkeys" },
   { id: "alerts", label: "Alerts" },
   { id: "donations", label: "Donations" },
+  { id: "vtuber", label: "VTuber mode" },
   { id: "chat", label: "Chat" },
   { id: "accounts", label: "Accounts" },
   { id: "plugins", label: "Plugins" },
@@ -223,12 +226,14 @@ export function SettingsDialog(props: { onClose: () => void; live: boolean; init
 
           {tab === "alerts" && <AlertsTab draft={draft} saveNow={saveNow} setDraft={setDraft} />}
           {tab === "donations" && <DonationsTab draft={draft} saveNow={saveNow} />}
+          {tab === "vtuber" && <VtuberTab draft={draft} saveNow={saveNow} />}
 
           {tab === "about" && (
             <AboutTab live={props.live} autoCheck={draft.updates.auto_check}
               setAutoCheck={(v) => saveNow({ ...draft, updates: { auto_check: v } })}
               lowMemory={draft.ui.low_memory} setLowMemory={(v) => saveNow({ ...draft, ui: { low_memory: v } })} />
           )}
+          {tab === "about" && <CefStatusRow />}
 
           {tab === "optimize" && (
             <AutoOptimize live={props.live}

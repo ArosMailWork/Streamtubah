@@ -113,7 +113,7 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
 }
 
 /// SHA-256 and Ed25519 signature of a downloaded asset.
-fn verify(data: &[u8], asset: &Asset) -> Result<(), String> {
+pub(crate) fn verify(data: &[u8], asset: &Asset) -> Result<(), String> {
     let b64 = base64::engine::general_purpose::STANDARD;
     let digest = Sha256::digest(data);
     let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();

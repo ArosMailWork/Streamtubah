@@ -326,6 +326,7 @@ pub struct AppSettings {
     pub plugins: PluginSettings,
     pub chat: ChatSettings,
     pub platform_apps: PlatformApps,
+    pub vtuber: crate::vtuber::VtuberSettings,
 }
 
 impl Default for AppSettings {
@@ -348,6 +349,7 @@ impl Default for AppSettings {
             plugins: Default::default(),
             chat: Default::default(),
             platform_apps: Default::default(),
+            vtuber: Default::default(),
         }
     }
 }

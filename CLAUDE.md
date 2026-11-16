@@ -15,7 +15,8 @@ Setup: see README.md. Plan: `plans/20261114-tauri-libobs-streaming-app/plan.md`.
 | Global hotkeys | `.claude/features/hotkeys.md` |
 | Secrets: encrypted vault (stream keys, client secrets, API password) + capture-protected Secrets window | `.claude/features/secrets.md` |
 | Auto-Optimize (upload test, encoder/bitrate/resolution recommendation) | `.claude/features/auto-optimize.md` |
-| Portable packaging, release signing, self-update | `.claude/features/updater.md` |
+| Portable packaging, release signing, self-update, browser component (CEF) downloaded on first use | `.claude/features/updater.md` |
 | Alerts (Alert Box overlay, Twitch/Kick/YouTube events) and donations (Ko-fi tunnel, Patreon, StreamElements, Streamlabs) | `.claude/features/alerts.md` |
 | Layout editor, modes (Editor/Live/Studio), Studio Mode, resizable panels | `.claude/features/layouts.md` |
 | JavaScript plugins (hidden WebView per plugin, permissions, SDK) and Plugin Audio source | `.claude/features/js-plugins.md` |
+| VTuber mode (cover real cameras, camera-use detection, allow list, cover image) | `.claude/features/vtuber-mode.md` |

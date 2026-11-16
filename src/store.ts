@@ -48,12 +48,18 @@ export async function act<T>(fn: () => Promise<T>): Promise<T | undefined> {
   try {
     return await fn();
   } catch (e) {
-    toast(errorText(e), "error");
+    const text = errorText(e);
+    // Something needed a Browser Source without the browser component: offer the download.
+    if (text.startsWith("BROWSER_COMPONENT_MISSING")) cefDialogStore.set(true);
+    else toast(text, "error");
     return undefined;
   } finally {
     refresh();
   }
 }
+
+/** Open state of the browser-component download dialog. */
+export const cefDialogStore = createStore(false);
 
 // --- Live data -----------------------------------------------------------------
 

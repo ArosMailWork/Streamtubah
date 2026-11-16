@@ -191,6 +191,8 @@ impl Studio {
 
     fn touch(&self) {
         self.dirty.store(true, Ordering::Relaxed);
+        // New or changed sources get their VTuber-mode cover right away (not on the next tick).
+        crate::vtuber::refresh_sources();
     }
 
     // -----------------------------------------------------------------------
@@ -695,6 +697,7 @@ impl Studio {
     }
 
     pub fn source_create(&mut self, type_id: &str, name: &str) -> Result<String> {
+        crate::cef::require(type_id)?;
         let name = unique_name(name.trim(), "Source");
         let source = Source::create(type_id, &name, None).ok_or_else(|| format!("Cannot create '{type_id}'"))?;
         preselect_lists(&source);
@@ -707,6 +710,7 @@ impl Studio {
         if Source::by_name(name).is_some() || self.channel_sources().iter().any(|s| s.name() == name) {
             return Err(format!("'{name}' is already used"));
         }
+        crate::cef::require(type_id)?;
         let scene = self.scenes[self.scene_index(scene)?].clone();
         let data = Data::from_json(settings);
         let source = Source::create(type_id, name, Some(&data)).ok_or_else(|| format!("Cannot create '{type_id}'"))?;
@@ -899,7 +903,7 @@ impl Studio {
             unsafe {
                 let id = sys::obs_source_get_id(f);
                 // The stream/recording gate is managed by "Show in", not the filter list.
-                if from_cstr(id) == crate::split::GATE_ID {
+                if from_cstr(id) == crate::split::GATE_ID || from_cstr(id) == crate::vtuber::COVER_ID {
                     return;
                 }
                 out.push(json!({

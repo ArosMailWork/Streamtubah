@@ -16,6 +16,11 @@ export function AddSourceDialog(props: { onClose: () => void; onCreated: (name: 
 
   useEffect(() => {
     api.sourceTypes().then((t) => {
+      // Without the browser component the type is not registered: list it anyway, adding it
+      // opens the download dialog.
+      if (!t.some((x) => x.id === "browser_source")) {
+        t = [...t, { id: "browser_source", name: "Browser (download needed)", video: true, audio: true }];
+      }
       setTypes(t);
       const first = [...t].sort((a, b) => featuredRank(a.id) - featuredRank(b.id))[0];
       if (first) { setPicked(first); setName(first.name); }

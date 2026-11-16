@@ -220,6 +220,21 @@ export interface JsPluginLog {
   ts: number;
 }
 
+export interface VtuberStatus {
+  enabled: boolean;
+  users: { app: string; name: string; allowed: boolean }[];
+}
+
+export interface CefStatus {
+  loaded: boolean;
+  bundled: boolean;
+  installed: boolean;
+  busy: boolean;
+  restart_needed: boolean;
+  state: string;
+  obs_runtime: string;
+}
+
 export type Platform = "twitch" | "youtube" | "kick";
 
 export interface ChatMessage {
@@ -363,6 +378,7 @@ export interface AppSettings {
   /** `js` is managed by jsPluginSetEnabled (the backend ignores it in settingsSet). */
   plugins: { load_obs_studio_plugins: boolean; js: Record<string, string[]> };
   chat: { twitch: string; kick: string; youtube: string };
+  vtuber: { enabled: boolean; allowed_apps: string[]; cover_image: string };
   platform_apps: {
     twitch_client_id: string;
     google_client_id: string;
@@ -514,6 +530,10 @@ export const api = {
   jsPluginShow: (id: string, visible: boolean) => invoke<void>("js_plugin_show", { id, visible }),
   jsPluginLogs: (id: string) => invoke<JsPluginLog[]>("js_plugin_logs", { id }),
   jsPluginsOpenFolder: () => invoke<void>("js_plugins_open_folder"),
+  vtuberStatus: () => invoke<VtuberStatus>("vtuber_status"),
+  cefStatus: () => invoke<CefStatus>("cef_status"),
+  cefInstall: (path: string | null) => invoke<void>("cef_install", { path }),
+  vtuberImportCover: (path: string) => invoke<string>("vtuber_import_cover", { path }),
   apiInfo: () => invoke<ApiInfo>("api_info"),
   chatHistory: () => invoke<ChatMessage[]>("chat_history"),
   chatStatus: () => invoke<Partial<Record<Platform, ChatStatus>>>("chat_status"),

@@ -268,10 +268,21 @@ pub fn import_media(src: &str) -> Result<String, String> {
     Ok(name)
 }
 
+fn valid_media_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('.') && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+/// Path of an imported media file (validated name, file must exist).
+pub fn media_path(name: &str) -> Option<PathBuf> {
+    let hub = HUB.get()?;
+    let p = hub.media.join(name);
+    (valid_media_name(name) && p.is_file()).then_some(p)
+}
+
 /// Bytes + MIME type of an imported media file. Names are validated (no paths).
 pub fn read_media(name: &str) -> Option<(Vec<u8>, &'static str)> {
     let hub = HUB.get()?;
-    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') || name.starts_with('.') {
+    if !valid_media_name(name) {
         return None;
     }
     let ext = name.rsplit('.').next()?.to_lowercase();

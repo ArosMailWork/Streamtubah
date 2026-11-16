@@ -235,9 +235,13 @@ pub fn settings_set(app: tauri::AppHandle, state: State<AppState>, mut settings:
     let (api, chat, hotkeys, alerts_changed, donate) = with(&state, |s| {
         let before = (s.settings.api.clone(), s.settings.chat.clone(), s.settings.hotkeys.clone());
         let (alerts_before, donate_before) = (s.settings.alerts.clone(), s.settings.donate.clone());
+        let vtuber_before = s.settings.vtuber.clone();
         // Enabled plugins change only through js_plugin_set_enabled (a stale draft must not disable them).
         settings.plugins.js = s.settings.plugins.js.clone();
         s.apply_settings(settings)?;
+        if vtuber_before != s.settings.vtuber {
+            crate::vtuber::configure(&s.settings.vtuber);
+        }
         let api_changed = serde_json::to_value(&before.0).ok() != serde_json::to_value(&s.settings.api).ok();
         Ok((
             api_changed.then(|| s.settings.with_secrets().api),
@@ -798,4 +802,38 @@ pub fn js_plugin_logs(id: String) -> Vec<Value> {
 #[tauri::command]
 pub fn js_plugins_open_folder() -> R<()> {
     tauri_plugin_opener::open_path(crate::jsplugins::folder(), None::<&str>).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// VTuber mode
+
+#[tauri::command]
+pub fn vtuber_status() -> Value {
+    crate::vtuber::status()
+}
+
+/// Copies an image (PNG / GIF / JPG / WebP) to use as the cover; returns its stored name.
+#[tauri::command]
+pub fn vtuber_import_cover(path: String) -> R<String> {
+    let ext = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).map(str::to_lowercase).unwrap_or_default();
+    if !["png", "gif", "jpg", "jpeg", "webp"].contains(&ext.as_str()) {
+        return Err("Use a PNG, GIF, JPG or WebP image".into());
+    }
+    crate::alerts::import_media(&path)
+}
+
+// ---------------------------------------------------------------------------
+// Browser component (CEF), downloaded on first use
+
+#[tauri::command]
+pub fn cef_status() -> Value {
+    crate::cef::status()
+}
+
+/// Downloads (or installs from a local zip) the browser component; a restart loads it.
+#[tauri::command]
+pub async fn cef_install(path: Option<String>) -> R<()> {
+    tauri::async_runtime::spawn_blocking(move || crate::cef::install(path.map(std::path::PathBuf::from)))
+        .await
+        .map_err(|e| e.to_string())?
 }

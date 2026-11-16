@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { CefDialog } from "./components/CefDialog";
+import { VtuberToggle } from "./components/VtuberTab";
 import "./App.css";
 import { ChatDrawer } from "./components/ChatDrawer";
 import { StatusBar } from "./components/Controls";
@@ -76,6 +78,7 @@ export default function App() {
           );
         })()}
         <span className="grow" />
+        <VtuberToggle />
         <UpdateButton live={live} />
         <button onClick={() => setSettingsTab("stream")}>⚙ Settings</button>
       </header>
@@ -89,6 +92,7 @@ export default function App() {
       {settingsTab && <SettingsDialog live={live} initialTab={settingsTab} onClose={() => setSettingsTab(null)} />}
       {state && !settingsTab && <NewMachineDialog live={live} />}
       <DragGhost />
+      <CefDialog />
       <Toasts />
     </div>
   );

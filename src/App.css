@@ -450,3 +450,6 @@ html.popout-root, html.popout-root body, html.popout-root #root { background: tr
 
 .plugin-log { max-height: 60vh; overflow: auto; font-size: 11px; white-space: pre-wrap; background: var(--bg, #111); padding: 8px; border-radius: 6px; }
 .js-plugin .prop-check { align-items: flex-start; }
+.vtuber-toggle.on { color: var(--accent); border-color: var(--accent); }
+.vtuber-toggle.warn { color: #f5c542; border-color: #b8901f; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }

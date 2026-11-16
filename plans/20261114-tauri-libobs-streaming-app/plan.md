@@ -50,6 +50,16 @@ B (chat) done; C (OAuth platforms: waiting for developer app client IDs) and D (
 See `phase-06-se-sl-split-output-plugins.md`: StreamElements/Streamlabs events, stream-only / recording-only sources
 (phase 5.7), JavaScript plugins + Plugin Audio source. Done 2026-11-14.
 
+## Phase 7 (2026-11-16)
+- VTuber mode: cover webcams always; warn + cover Display Capture / that app's Window Capture while an app outside the
+  face-tracking allow list uses the camera (Windows camera log in the registry). User decisions: cover + warn only
+  (never close/block apps), whole Display Capture covered, default cover = pngtubah sample character, importable image,
+  allow list pre-filled with VTuber tracking apps. See `.claude/features/vtuber-mode.md`.
+- Browser component (CEF) split off the package and downloaded on first use (user decision: option 1 of
+  keep / CEF on demand / also drop Qt). Portable 334 → 98 MB, zip 149 → 40 MB.
+- Release 0.1.1 (portable folder + update assets + CEF pack) built with `scripts/package.sh`; source pushed to main,
+  tags `v0.1.1` and `runtime-cef-32.1.0`; the user creates the GitHub releases by hand (no gh CLI).
+
 ## Risks
 - WebView2 vs native child z-order and DPI scaling → compute physical px from devicePixelRatio.
 - HTML popups cannot overlay preview → hide preview while modals open.
