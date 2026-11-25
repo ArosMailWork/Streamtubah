@@ -40,7 +40,13 @@ React UI (WebView2) --invoke/events--> Rust (src-tauri)
 - Idle: ~0.2-0.9 % CPU at 30 fps.
 
 ## Next
-- Release bundling of the OBS runtime (Tauri resources / NSIS), hotkeys, studio mode, virtual camera, scene collections/profiles, macOS.
+Done since: hotkeys, Studio Mode, virtual camera, scene collections/profiles, portable release + self-update (phase 3-7).
+Open (2026-11-17):
+- Waiting on the user: developer client IDs (login, own-channel chat, direct Twitch follows), virtual camera UAC
+  registration, real tests with SE/SL tokens, a real webcam (VTuber mode) and a real microphone (JS plugins, Bluetooth).
+- Deferred by the user: TikTok/Facebook chat, VietQR/PlayerDuo/Gank donations, donation TTS, vertical (dual) output.
+- Not planned yet: Windows code signing (SmartScreen warning), in-app editor for VST plug-ins (needs a Qt event loop).
+- Excluded by the user: installer, macOS.
 
 ## Phase 2
 See `phase-02-audio-ports-integrations.md`. Part A (audio safety, ports, control API) done 2026-11-14;
